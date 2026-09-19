@@ -1,0 +1,51 @@
+/* ==================== 设计变量 ====================
+   浅色主题：白底 + 浅蓝 + 深蓝。改这里即可换肤。 */
+:root {
+  /* 背景与表面 */
+  --c-bg:            #f4f7fb;
+  --c-surface:       #ffffff;
+  --c-surface-2:     #f7fafd;
+  --c-surface-3:     #eef4fb;
+
+  /* 描边 */
+  --c-border:        #e4ecf5;
+  --c-border-strong: #cfdfef;
+
+  /* 文字 */
+  --c-text:          #1f2d3d;
+  --c-text-2:        #5a6b7f;
+  --c-text-3:        #8b9aad;
+
+  /* 主色与语义色 */
+  --c-brand:         #1a6fd4;
+  --c-brand-strong:  #12559f;
+  --c-brand-soft:    #e8f1fc;
+  --c-accent:        #0f9d8f;
+  --c-warn:          #c67c07;
+  --c-danger:        #d0453a;
+  --c-soft-danger:   #fdeceb;
+  --c-soft-success:  #e6f6ef;
+  --c-soft-warn:     #fdf3e3;
+  --c-soft-neutral:  #eef1f5;
+
+  /* 圆角与阴影 */
+  --r-sm: 6px;
+  --r:    10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+  --sh-1: 0 1px 2px rgba(20, 40, 70, .05);
+  --sh-2: 0 4px 14px rgba(20, 40, 70, .07);
+  --sh-3: 0 16px 40px rgba(20, 40, 70, .16);
+
+  /* 布局尺寸 */
+  --sidebar-w:      236px;
+  --sidebar-w-mini: 72px;
+  --topbar-h:       60px;
+  --gap:            16px;
+
+  /* 字体与动效 */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ease: .18s ease;
+}
