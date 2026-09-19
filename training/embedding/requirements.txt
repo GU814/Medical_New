@@ -1,0 +1,8 @@
+# 嵌入模型训练与服务依赖（独立 venv）
+# bge-small-zh 仅 24M 参数，8GB 显存可全参微调；服务用 FastAPI 暴露 OpenAI 兼容接口
+sentence-transformers==3.0.1
+torch==2.3.1
+datasets==2.21.0
+fastapi==0.115.0
+uvicorn==0.32.0
+openai==1.51.0

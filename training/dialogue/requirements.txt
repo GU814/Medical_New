@@ -1,0 +1,10 @@
+# 对话/问诊模型训练依赖（独立 venv，别用项目 .venv）
+# 适合 8GB 显存：Qwen2.5-3B + QLoRA(4bit)
+torch==2.3.1
+transformers==4.44.2
+peft==0.12.0
+datasets==2.21.0
+accelerate==0.33.0
+bitsandbytes==0.43.1
+sentencepiece==0.1.99
+openai==1.51.0

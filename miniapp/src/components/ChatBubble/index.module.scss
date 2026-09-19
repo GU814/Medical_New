@@ -1,0 +1,69 @@
+@use '@/styles/variables.scss' as *;
+
+.wrapper {
+  display: flex;
+  width: 100%;
+  margin-bottom: $spacing-md;
+  flex-direction: column;
+}
+
+.userWrapper {
+  align-items: flex-end;
+}
+
+.botWrapper {
+  align-items: flex-start;
+}
+
+.bubble {
+  max-width: 580rpx;
+  padding: $spacing-md $spacing-lg;
+  border-radius: $radius-lg;
+  font-size: $font-size-md;
+  line-height: $line-height-loose;
+  word-break: break-word;
+  box-sizing: border-box;
+}
+
+.userBubble {
+  background: $color-user-bubble;
+  color: $color-text-white;
+  border-bottom-right-radius: $radius-xs;
+}
+
+.botBubble {
+  background: $color-doctor-bubble;
+  color: $color-text-primary;
+  border: 1rpx solid $color-border;
+  border-bottom-left-radius: $radius-xs;
+}
+
+.reportBubble {
+  max-width: 100%;
+  width: 100%;
+  background: $color-bg-card;
+  border: 2rpx solid rgba(22, 93, 255, 0.15);
+  border-radius: $radius-lg;
+  padding: $spacing-lg;
+}
+
+.reportHeader {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: $spacing-sm;
+  padding-bottom: $spacing-sm;
+  border-bottom: 1rpx solid $color-divider;
+}
+
+.reportTitle {
+  font-size: $font-size-lg;
+  font-weight: $font-weight-semibold;
+  color: $color-primary;
+}
+
+.streamingTag {
+  font-size: $font-size-xs;
+  color: $color-accent-orange;
+}

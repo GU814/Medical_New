@@ -1,0 +1,114 @@
+@use '@/styles/variables.scss' as *;
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: $color-bg-page;
+}
+
+.stageBar {
+  flex-shrink: 0;
+  border-bottom: 1rpx solid $color-divider;
+}
+
+.scrollArea {
+  flex: 1;
+  padding: $spacing-md $spacing-lg;
+  box-sizing: border-box;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: $spacing-xl 0;
+}
+
+.emptyIcon {
+  font-size: 80rpx;
+  margin-bottom: $spacing-md;
+}
+
+.emptyText {
+  font-size: $font-size-sm;
+  color: $color-text-tertiary;
+  text-align: center;
+  line-height: $line-height-loose;
+  padding: 0 $spacing-xl;
+}
+
+.inputBar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  padding: $spacing-sm $spacing-md;
+  background: $color-bg-card;
+  border-top: 1rpx solid $color-divider;
+}
+
+.input {
+  flex: 1;
+  min-height: 72rpx;
+  max-height: 200rpx;
+  padding: $spacing-sm $spacing-md;
+  background: $color-bg-page;
+  border-radius: $radius-md;
+  font-size: $font-size-md;
+  color: $color-text-primary;
+  margin-right: $spacing-sm;
+  line-height: $line-height-normal;
+}
+
+.sendBtn {
+  width: 96rpx;
+  height: 72rpx;
+  border-radius: $radius-md;
+  background: $color-primary;
+  color: $color-text-white;
+  font-size: $font-size-sm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all $transition-base;
+  &:active {
+    opacity: 0.85;
+  }
+}
+
+.sendBtnDisabled {
+  background: $color-text-disabled;
+}
+
+.resetBtn {
+  position: absolute;
+  top: 16rpx;
+  right: 24rpx;
+  z-index: 10;
+  font-size: $font-size-xs;
+  color: $color-primary;
+  background: rgba(22, 93, 255, 0.08);
+  padding: $spacing-xs $spacing-sm;
+  border-radius: $radius-round;
+}
+
+.loadingDot {
+  display: inline-block;
+  width: 8rpx;
+  height: 8rpx;
+  margin: 0 4rpx;
+  background: $color-text-tertiary;
+  border-radius: 50%;
+  animation: blink 1.4s infinite both;
+}
+
+@keyframes blink {
+  0%, 80%, 100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}

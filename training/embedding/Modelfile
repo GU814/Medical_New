@@ -1,0 +1,10 @@
+# 嵌入模型 Ollama 注册文件（备选方案）
+#
+# 如果你能把自训嵌入模型导出成 GGUF（需 llama.cpp 对 BGE 架构的支持），
+# 放到本目录后执行：
+#   ollama create med-embed -f Modelfile
+# 然后 config.EMBEDDING_MODEL=med-embed，且 EMBEDDING_API_BASE_URL 指向 Ollama(默认)，
+# 就不需要起 serve_embed.py 了。
+#
+# 注意：BGE 类嵌入模型转 GGUF 兼容性不如对话模型稳定，新手建议先用 serve_embed.py 方案。
+FROM ./med-embed.gguf

@@ -1,0 +1,25 @@
+@use '@/styles/variables.scss' as *;
+
+.container {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  padding: $spacing-sm $spacing-md;
+  margin: $spacing-md $spacing-lg;
+  background: rgba(255, 125, 0, 0.08);
+  border-radius: $radius-sm;
+  border: 1rpx solid rgba(255, 125, 0, 0.2);
+}
+
+.icon {
+  font-size: $font-size-sm;
+  margin-right: $spacing-xs;
+  flex-shrink: 0;
+}
+
+.text {
+  font-size: $font-size-xs;
+  color: $color-text-secondary;
+  line-height: $line-height-normal;
+  flex: 1;
+}

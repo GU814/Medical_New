@@ -1,0 +1,184 @@
+@use '@/styles/variables.scss' as *;
+
+.container {
+  min-height: 100vh;
+  background: $color-bg-page;
+  padding: $spacing-md $spacing-lg $spacing-xl;
+  box-sizing: border-box;
+}
+
+// 用户卡片
+.userCard {
+  background: linear-gradient(135deg, $color-primary 0%, $color-primary-light 100%);
+  border-radius: $radius-lg;
+  padding: $spacing-lg;
+  margin-bottom: $spacing-md;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  box-shadow: $shadow-card;
+}
+
+.avatar {
+  width: 112rpx;
+  height: 112rpx;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  @include flex-center;
+  margin-right: $spacing-lg;
+  font-size: $font-size-xxl;
+  color: $color-text-white;
+  flex-shrink: 0;
+}
+
+.userInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.userName {
+  font-size: $font-size-xl;
+  font-weight: $font-weight-semibold;
+  color: $color-text-white;
+  margin-bottom: 8rpx;
+}
+
+.userMeta {
+  font-size: $font-size-xs;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+// 认证状态
+.authRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-top: $spacing-sm;
+}
+
+.authTag {
+  font-size: $font-size-xs;
+  color: $color-success;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 4rpx $spacing-sm;
+  border-radius: $radius-round;
+  margin-right: $spacing-sm;
+}
+
+// 资料编辑卡片
+.card {
+  background: $color-bg-card;
+  border-radius: $radius-lg;
+  padding: $spacing-lg;
+  margin-bottom: $spacing-md;
+  box-shadow: $shadow-card;
+}
+
+.cardTitle {
+  font-size: $font-size-md;
+  font-weight: $font-weight-semibold;
+  color: $color-text-primary;
+  margin-bottom: $spacing-md;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: $spacing-md 0;
+  border-bottom: 1rpx solid $color-divider;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.rowLabel {
+  font-size: $font-size-sm;
+  color: $color-text-secondary;
+  flex-shrink: 0;
+}
+
+.rowValue {
+  font-size: $font-size-sm;
+  color: $color-text-primary;
+  text-align: right;
+  @include text-ellipsis;
+  max-width: 440rpx;
+}
+
+.nickInput {
+  text-align: right;
+  font-size: $font-size-sm;
+  color: $color-text-primary;
+  width: 360rpx;
+}
+
+.saveBtn {
+  margin-top: $spacing-md;
+  height: $button-height-md;
+  border-radius: $radius-button;
+  background: $color-primary;
+  color: $color-text-white;
+  font-size: $font-size-md;
+  @include flex-center;
+
+  &:active {
+    opacity: 0.85;
+  }
+}
+
+// 隐私入口
+.menuItem {
+  background: $color-bg-card;
+  border-radius: $radius-lg;
+  padding: $spacing-lg;
+  margin-bottom: $spacing-md;
+  box-shadow: $shadow-card;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+
+  &:active {
+    opacity: 0.85;
+  }
+}
+
+.menuText {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.menuIcon {
+  font-size: $font-size-lg;
+  margin-right: $spacing-md;
+}
+
+.menuLabel {
+  font-size: $font-size-md;
+  color: $color-text-primary;
+}
+
+.menuArrow {
+  font-size: $font-size-md;
+  color: $color-text-tertiary;
+}
+
+// 登出
+.logoutBtn {
+  margin-top: $spacing-lg;
+  height: $button-height-md;
+  border-radius: $radius-button;
+  background: $color-bg-card;
+  color: $color-error;
+  font-size: $font-size-md;
+  @include flex-center;
+  box-shadow: $shadow-card;
+
+  &:active {
+    opacity: 0.85;
+  }
+}

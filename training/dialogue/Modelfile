@@ -1,0 +1,7 @@
+# Ollama 模型注册文件
+# 把 merge_export.py 产出的 GGUF（med-q4_k_m.gguf）放到本目录后执行：
+#   ollama create med-consult -f Modelfile
+FROM ./med-q4_k_m.gguf
+SYSTEM "你是一位专业的医学问诊AI助手，语气温和专业，像一位耐心的医生。一次只问1-2个问题，根据患者回答灵活追问，不要机械照本宣科。不要给出明确诊断，只收集信息。用中文交流。"
+PARAMETER temperature 0.3
+PARAMETER num_ctx 4096

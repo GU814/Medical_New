@@ -1,0 +1,41 @@
+# 本地密钥/环境配置，禁止入库
+.env
+.env.local
+data/.dev_master_key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 数据/临时产物
+data/chroma_db/
+data/*.db
+.cleanup_trash/
+build/
+dist/
+__pycache__/
+
+# 小程序构建产物（微信开发者工具以 miniapp/dist 为 miniprogramRoot）
+miniapp/dist/
+miniapp/node_modules/
+miniapp/.temp/
+miniapp/.swc/
+
+# 临时排查脚本
+_tmp_*.py
+_tmp_*.txt
+
+# 打包/运行时与工具目录（体积大或环境相关，不入库）
+python_embed/
+.pai/
+.idea/
+.workbuddy/
+node_modules/
+miniapp/node_modules_bak/
+miniapp/_dist_old*/
+miniapp/.git_empty_backup/
+
+# 日志
+*.log

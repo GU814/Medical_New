@@ -1,0 +1,186 @@
+@use '@/styles/variables.scss' as *;
+
+.container {
+  min-height: 100vh;
+  background: $color-bg-page;
+  padding: $spacing-md $spacing-lg $spacing-xl;
+  box-sizing: border-box;
+}
+
+// 加密概览卡
+.hero {
+  background: $color-bg-card;
+  border-radius: $radius-lg;
+  padding: $spacing-lg;
+  margin-bottom: $spacing-md;
+  box-shadow: $shadow-card;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.heroIcon {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: $radius-md;
+  background: rgba(22, 93, 255, 0.1);
+  @include flex-center;
+  font-size: 44rpx;
+  margin-right: $spacing-md;
+  flex-shrink: 0;
+}
+
+.heroText {
+  flex: 1;
+}
+
+.heroTitle {
+  font-size: $font-size-md;
+  font-weight: $font-weight-semibold;
+  color: $color-text-primary;
+  margin-bottom: 4rpx;
+}
+
+.heroDesc {
+  font-size: $font-size-xs;
+  color: $color-text-tertiary;
+}
+
+// 分组
+.section {
+  background: $color-bg-card;
+  border-radius: $radius-lg;
+  padding: $spacing-lg;
+  margin-bottom: $spacing-md;
+  box-shadow: $shadow-card;
+}
+
+.sectionTitle {
+  font-size: $font-size-md;
+  font-weight: $font-weight-semibold;
+  color: $color-text-primary;
+  margin-bottom: $spacing-sm;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+
+  &::before {
+    content: '';
+    width: 6rpx;
+    height: 28rpx;
+    background: $color-primary;
+    border-radius: $radius-round;
+    margin-right: $spacing-sm;
+  }
+}
+
+.sectionDesc {
+  font-size: $font-size-sm;
+  color: $color-text-secondary;
+  line-height: $line-height-loose;
+  margin-bottom: $spacing-md;
+}
+
+// 加密技术点列表
+.techList {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}
+
+.techItem {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.techDot {
+  color: $color-success;
+  margin-right: $spacing-sm;
+  flex-shrink: 0;
+  font-size: $font-size-sm;
+  line-height: $line-height-loose;
+}
+
+.techText {
+  font-size: $font-size-sm;
+  color: $color-text-secondary;
+  line-height: $line-height-loose;
+}
+
+// 开关行
+.switchRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: $spacing-md 0;
+  border-bottom: 1rpx solid $color-divider;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.switchLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.switchTitle {
+  font-size: $font-size-sm;
+  color: $color-text-primary;
+  margin-bottom: 4rpx;
+}
+
+.switchHint {
+  font-size: $font-size-xs;
+  color: $color-text-tertiary;
+}
+
+// 链接行
+.linkRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: $spacing-md 0;
+  border-bottom: 1rpx solid $color-divider;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.linkText {
+  font-size: $font-size-sm;
+  color: $color-text-primary;
+}
+
+.linkArrow {
+  font-size: $font-size-sm;
+  color: $color-text-tertiary;
+}
+
+// 危险操作
+.dangerBtn {
+  margin-top: $spacing-sm;
+  height: $button-height-md;
+  border-radius: $radius-button;
+  background: rgba(245, 63, 63, 0.08);
+  color: $color-error;
+  font-size: $font-size-md;
+  @include flex-center;
+
+  &:active {
+    opacity: 0.85;
+  }
+}
+
+.footer {
+  text-align: center;
+  font-size: $font-size-xs;
+  color: $color-text-disabled;
+  padding: $spacing-lg 0;
+  line-height: $line-height-loose;
+}

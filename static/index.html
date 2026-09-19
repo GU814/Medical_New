@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>医学问诊智能体</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 顶部标题栏 -->
+        <div class="header">
+            <div class="header-left">
+                <span class="logo">🏥</span>
+                <h1>医学问诊智能体</h1>
+            </div>
+            <div class="header-right">
+                <span id="stageIndicator" class="stage-badge">阶段 1/5</span>
+                <button id="resetBtn" class="reset-btn" title="重新开始">🔄 重置</button>
+            </div>
+        </div>
+
+        <!-- 聊天区域 -->
+        <div id="chatArea" class="chat-area">
+            <div class="welcome-message">
+                <div class="welcome-icon">👨‍⚕️</div>
+                <h2>欢迎使用医学问诊助手</h2>
+                <p>我是您的AI问诊助手，将通过对话了解您的健康状况。</p>
+                <p class="disclaimer">⚠️ 本系统仅供参考，不能替代医生诊断</p>
+            </div>
+        </div>
+
+        <!-- 输入区域 -->
+        <div class="input-area">
+            <div class="input-wrapper">
+                <textarea
+                    id="messageInput"
+                    placeholder="请描述您的症状或问题..."
+                    rows="1"
+                ></textarea>
+                <button id="sendBtn" class="send-btn" title="发送">
+                    <svg viewBox="0 0 24 24" width="24" height="24">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/chat.js"></script>
+</body>
+</html>
