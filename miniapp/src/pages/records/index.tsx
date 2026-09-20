@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text } from '@tarojs/components';
-import Taro, { useDidShow, usePullDownRefresh, useReachBottom } from '@tarojs/taro';
+import Taro, { useDidShow, usePullDownRefresh, useReachBottom, useShareAppMessage, useShareTimeline } from '@tarojs/taro';
 import { listRecords } from '@/services/medical';
 import { isLoggedIn } from '@/services/auth';
 import type { RecordListItem } from '@/types';
@@ -65,6 +65,16 @@ function RecordsPage() {
   };
 
   const hasMore = list.length < total;
+
+  // 原生转发 / 分享朋友圈
+  useShareAppMessage(() => ({
+    title: '我的就诊记录 · 智康医疗 AI 助手',
+    path: '/pages/records/index',
+  }));
+
+  useShareTimeline(() => ({
+    title: '我的就诊记录 · 智康医疗 AI 助手',
+  }));
 
   return (
     <View className={styles.container}>

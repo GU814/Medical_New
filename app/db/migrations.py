@@ -224,11 +224,74 @@ def migrate_v3(conn: sqlite3.Connection):
     conn.commit()
 
 
+def migrate_v4(conn: sqlite3.Connection):
+    """P2/P3 业务表:user_locations(地理位置) / user_subscriptions(订阅授权) / reminders(提醒)"""
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT,
+            latitude REAL,
+            longitude REAL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_loc_user ON user_locations(user_id)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            template_id TEXT NOT NULL,
+            scene TEXT,
+            authorized_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'authorized',
+            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_user_tpl ON "
+        "user_subscriptions(user_id, template_id)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            template_id TEXT NOT NULL,
+            data_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'scheduled',
+            scheduled_at TEXT NOT NULL,
+            sent_at TEXT,
+            fail_reason TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reminder_status ON reminders(status, scheduled_at)"
+    )
+    conn.commit()
+
+
 # 迁移注册表:(version, function)
 _MIGRATIONS = [
     (1, migrate_v1),
     (2, migrate_v2),
     (3, migrate_v3),
+    (4, migrate_v4),
 ]
 
 

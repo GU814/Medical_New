@@ -21,7 +21,7 @@ from app.middleware.audit import AuditMiddleware
 from app.middleware.auth import AuthMiddleware
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import auth, consultation, records, share
+from app.routers import auth, consultation, records, share, location, subscribe, wxacode
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,9 @@ def create_app() -> FastAPI:
     app.include_router(consultation.router)
     app.include_router(records.router)
     app.include_router(share.router)
+    app.include_router(location.router)
+    app.include_router(subscribe.router)
+    app.include_router(wxacode.router)
 
     # ---------- 静态资源(可选,供分享落地页等) ----------
     import os

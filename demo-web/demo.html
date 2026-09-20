@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="0tlPCXXZuJQdm8ZGgaBoEV">
+<head data-page-node-id="whDIWlfM5Ty650IdUD4o7e">
+<meta charset="UTF-8" data-page-node-id="k2NIpzLk5JH6VtNBwAKORZ" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" data-page-node-id="IsqK7hx7Q1HsjhhvAeKeOR" />
+<title>医学问诊智能体 · 简约 Demo</title>
+<link rel="stylesheet" href="assets/css/variables.css" data-page-node-id="tGogn2si9oVCrMGaCBo0bd" />
+<link rel="stylesheet" href="assets/css/base.css" data-page-node-id="VU4eSE8qZg1RfIRaDcMxoo" />
+<link rel="stylesheet" href="assets/css/components.css" data-page-node-id="4cABFO0aNOrr5N2gDc6AIK" />
+<style>
+/* ---------- 本页专属布局（其余样式全部复用现有组件库） ---------- */
+.page { max-width: 1080px; margin: 0 auto; padding: 30px 20px 56px; scroll-behavior: smooth; }
+
+.hero { margin-bottom: 26px; }
+.hero-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.hero-title { font-size: 30px; font-weight: 700; letter-spacing: .3px; }
+.hero-desc { margin-top: 10px; max-width: 660px; color: var(--c-text-2); }
+.hero-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+
+.sec { margin-top: 34px; }
+.sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 13px; flex-wrap: wrap; }
+.sec-title { font-size: 17px; font-weight: 600; }
+.sec-sub { font-size: 12.5px; color: var(--c-text-3); margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+.cap-note { font-size: 12px; color: var(--c-text-3); margin-bottom: 10px; }
+.cap-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 5.5px 0; font-size: 13px; border-bottom: 1px dashed var(--c-border);
+}
+.cap-item:last-child { border-bottom: 0; }
+.cap-item .name { color: var(--c-text-2); }
+
+.demo-chat .chat { height: 380px; }
+.demo-report .report { white-space: normal; }
+
+.page-foot { margin-top: 26px; }
+</style>
+</head>
+<body data-page-node-id="CEJETA10mB1Ze20IZHsr09">
+
+<div class="page" data-page-node-id="JP3kJ0FNV0ADdQg2jdjb3u">
+
+  <!-- ========== 头部：产品简介 ========== -->
+  <header class="hero" data-page-node-id="c8FYGyqpE2HhmSmsQHhBNs">
+    <div class="hero-badges" data-page-node-id="jelgC1Kdw7U0ifHGJFxAVu">
+      <span class="badge brand" data-page-node-id="GO0C5DyvKFYkHV24f7NtIC"><span class="dot" data-page-node-id="2FX86UvWJiz7SkfXNG73qI"></span>纯前端 Demo · 零依赖</span>
+      <span class="badge" data-page-node-id="57tRWeXtaEUHBt8Ywd2EQp"><span class="dot" data-page-node-id="JXikIZJTOIGPWw5zFVv0ay"></span>所有数据为本地模拟</span>
+    </div>
+    <h1 class="hero-title" data-page-node-id="LWPqYKSEBY2pyFcJ3uWBBH">医学问诊智能体</h1>
+    <p class="hero-desc t-body" data-page-node-id="ZA1a3BiVJyYTdrGLTMYXAp">
+      5 阶段引导式 AI 问诊 · RAG 医学知识库（ChromaDB + 768 维向量） · 双 LLM 流式问答 · 结构化病历报告。
+      本页为简约演示版：上方概览产品能力现状（依据《微信能力对标核查》），下方提供可交互示例。
+    </p>
+    <div class="hero-actions" data-page-node-id="Mkq48YTc4ZVfk6OAGWWges">
+      <a class="btn btn-primary" href="#demo" data-page-node-id="EJAFLscEzgPOZ3aFTqF0ha">体验交互示例</a>
+      <a class="btn" href="index.html" data-page-node-id="yFc6CXxHNKm3xF0BIVUjlp">查看完整界面原型</a>
+    </div>
+  </header>
+
+  <!-- ========== 能力概览 ========== -->
+  <section class="sec" id="caps" data-page-node-id="mTPAskuYyvWJipyzngjDcU">
+    <div class="sec-head" data-page-node-id="opoU54wE6JYyObRY99CHP4">
+      <span class="sec-title" data-page-node-id="LgkfO6ezwPZ4Utlc0HmAeL">能力概览</span>
+      <span class="sec-sub" data-page-node-id="lpycwZkSdC7QmFGht6Iomb">
+        <span class="badge ok" data-page-node-id="GNcgfizvnvs6fDgwhBsXMn"><span class="dot" data-page-node-id="rgKcCg89HLkiAgGFcuurL1"></span>已实现</span>
+        <span class="badge warn" data-page-node-id="jGAVZmxuvzpeILfQbhep4G"><span class="dot" data-page-node-id="JruTDmJvwF0ahuoWWElplt"></span>部分实现</span>
+        <span class="badge danger" data-page-node-id="Iu2C1gDeppqBRHxwQbSRL7"><span class="dot" data-page-node-id="FhpedySAjB08fz89fSnphL"></span>缺失</span>
+      </span>
+    </div>
+    <div class="grid grid-4" id="cap-stats" style="margin-bottom:14px" data-page-node-id="kKjDrgJWi9UzeqBxShEKg1"></div>
+    <div class="grid grid-3" id="cap-grid" data-page-node-id="UF6zyvORixaw2LJOQ7w4NM"></div>
+  </section>
+
+  <!-- ========== 交互示例 ========== -->
+  <section class="sec" id="demo" data-page-node-id="Rmt2uYdlQ2GQeAaRr9ZmZk">
+    <div class="sec-head" data-page-node-id="6FfzrAPGMljjqfrZyr7PRC">
+      <span class="sec-title" data-page-node-id="8gQNlDJlRFEaKVL5BCUe3b">交互示例</span>
+      <span class="sec-sub" data-page-node-id="C9wue9HzZ1U7TLdRTnJNog">回复为固定演示文本，不含真实模型调用</span>
+    </div>
+
+    <!-- 1. 智能问诊对话 -->
+    <div class="card demo-chat" data-page-node-id="zDbYIy0Tg8jvRQSABsvtOR">
+      <div class="card-head" data-page-node-id="0JsoQCEE7RcwccvZGp8ewd">
+        <span class="t-sub" data-page-node-id="x5HzQtBAkXihtFB8GzOoab">智能问诊 · 对话演示</span>
+        <div class="extra" data-page-node-id="GgGthonAcWOkL7pvpBrvOp"><button class="btn btn-sm" data-act="chat-reset" data-page-node-id="7tG5fTHJ09HaFeXtjgaEU9">重新开始</button></div>
+      </div>
+      <div class="card-body tight" id="demo-stage" data-page-node-id="jYj95gfr5FkvKcrtSIClD4"></div>
+      <div class="chat" data-page-node-id="oX19P61u9IcybuiU81xQhM">
+        <div class="chat-body scroll-y" id="demo-chat-body" data-page-node-id="h5Tur7PATBdkCgtCLz9TzH"></div>
+      </div>
+      <div class="card-body composer" data-page-node-id="Kw4xu084Fv4XZ3zXCCSGmU">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" id="demo-quick" data-page-node-id="rGbstPzHYbGW3MLquUvgh2"></div>
+        <div class="composer-row" data-page-node-id="qMmwECIGKZ2A5ct1UW3V2V">
+          <textarea class="textarea" id="demo-input" rows="2" placeholder="描述您的症状，例如：咳嗽三天，晚上比较厉害…"></textarea>
+          <button class="btn btn-primary btn-lg" id="demo-send" style="flex:none" data-page-node-id="Z3yjOvKxELbj0ZYBQYE70M">发送</button>
+        </div>
+        <div class="composer-hint" data-page-node-id="zQkpdcmOJEqnIFRCJMkPJh"><span data-page-node-id="G5ClYVuvPlAa7GJodArmUf">Enter 发送，Shift + Enter 换行</span><span id="demo-count" data-page-node-id="sxUOWKQCO7bDxpOuq4kdvP">0 / 500</span></div>
+      </div>
+    </div>
+
+    <!-- 2. 报告预览 + 3. 分享 -->
+    <div class="grid grid-2" style="margin-top:16px" data-page-node-id="IzJDvVjTRDMSwBqi6BtQrU">
+      <div class="card demo-report" data-page-node-id="tZZGBvDgVUtTHnPe17AQBS">
+        <div class="card-head" data-page-node-id="jiOV9ezPda0RQuNVR84L0y">
+          <span class="t-sub" data-page-node-id="pyrjAAREyiRZarhks2I0YN">结构化报告 · 预览演示</span>
+          <div class="extra" data-page-node-id="f1dG3v9TQQwJOQ1A7BFgWt"><button class="btn btn-sm" id="demo-report-btn" data-page-node-id="RsvX6wYtYMRXGgwpejQVY5">生成报告</button></div>
+        </div>
+        <div class="card-body" id="demo-report-body" data-page-node-id="zLA9AG7g1ItIpDQcKjvINW"></div>
+      </div>
+
+      <div class="card" data-page-node-id="RmclXL9zilTmyAVWMhfWqZ">
+        <div class="card-head" data-page-node-id="t7qQ0GGLlKXRrNn2yaEftk">
+          <span class="t-sub" data-page-node-id="ifbCD3gZHWDCFNBwvRczHG">分享中心 · 演示</span>
+        </div>
+        <div id="demo-share-body" data-page-node-id="7QDqVQF72tRCBEqloxgRiL"></div>
+        <div class="card-body" id="demo-qr-wrap" style="display:none;border-top:1px solid var(--c-border)" data-page-node-id="3ADSlg50DBgIsJqjrKoxya">
+          <div class="qr-box" data-page-node-id="50WTbBDIq0mmNrE8l57lAX"></div>
+          <p class="t-xs t-dim" style="text-align:center;margin-top:8px" data-page-node-id="J2mxAGWwdArfEYJwQljCf0">扫码进入小程序（占位演示）</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 免责声明 ========== -->
+  <div class="page-foot" data-page-node-id="5qH0mDWATSn84gbAeMUesB">
+    <div class="notice" id="demo-notice" data-page-node-id="BwIJXheaNtzBTSfuyWHY0M"></div>
+  </div>
+
+</div>
+
+<script src="assets/js/core/dom.js"></script>
+<script src="assets/js/demo-page.js"></script>
+</body>
+</html>

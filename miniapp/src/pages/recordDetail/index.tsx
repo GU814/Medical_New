@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, Button } from '@tarojs/components';
-import Taro, { useDidShow } from '@tarojs/taro';
+import Taro, { useDidShow, useShareAppMessage, useShareTimeline } from '@tarojs/taro';
 import Markdown from '@/utils/markdown';
 import { getRecordDetail, exportRecordPdf, createShare } from '@/services/medical';
 import { API_BASE } from '@/config';
@@ -41,6 +41,19 @@ function RecordDetailPage() {
   useDidShow(() => {
     loadDetail();
   });
+
+  // 原生转发 / 分享朋友圈
+  useShareAppMessage(() => ({
+    title: record
+      ? `${record.patient_name || '患者'} 的就诊记录 · 第 ${record.visit_count} 次就诊`
+      : '就诊记录详情',
+    path: `/pages/recordDetail/index?id=${id}`,
+  }));
+
+  useShareTimeline(() => ({
+    title: '就诊记录详情 · 智康医疗 AI 助手',
+    query: `id=${id}`,
+  }));
 
   const handleExport = async () => {
     if (acting || !record) return;

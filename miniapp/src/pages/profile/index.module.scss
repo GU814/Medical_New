@@ -167,6 +167,32 @@
   color: $color-text-tertiary;
 }
 
+// 联系客服(微信原生客服会话入口,open-type="contact")
+.contactBtn {
+  margin: 0;
+  padding: $spacing-lg;
+  background: $color-bg-card;
+  border-radius: $radius-lg;
+  margin-bottom: $spacing-md;
+  box-shadow: $shadow-card;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  line-height: normal;
+  font-size: $font-size-md;
+  font-weight: $font-weight-normal;
+  color: $color-text-primary;
+
+  &::after {
+    border: none;
+  }
+
+  &:active {
+    opacity: 0.85;
+  }
+}
+
 // 登出
 .logoutBtn {
   margin-top: $spacing-lg;

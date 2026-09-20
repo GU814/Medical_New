@@ -7,7 +7,11 @@ export default defineAppConfig({
     'pages/login/index',
     'pages/recordDetail/index',
     'pages/privacy/index',
+    'pages/location/index',
+    'pages/share/index',
   ],
+  // 使用位置相关接口需声明(隐私合规)
+  requiredPrivateInfos: ['getLocation', 'chooseLocation', 'onLocationChange'],
   window: {
     backgroundTextStyle: 'dark',
     navigationBarBackgroundColor: '#ffffff',

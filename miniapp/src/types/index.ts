@@ -66,3 +66,32 @@ export interface SSEEvent {
   event: 'reply' | 'report' | 'end' | 'report_done' | 'error';
   data: string;
 }
+
+// ==================== 地理位置 ====================
+export interface UserLocation {
+  id: number;
+  name: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  is_default: boolean;
+  created_at: string;
+}
+
+// ==================== 小程序码 ====================
+export interface WxacodeResult {
+  image_base64?: string;
+  content_type: string;
+  mock: boolean;
+}
+
+// ==================== 订阅提醒 ====================
+export interface ReminderItem {
+  id: number;
+  template_id: string;
+  data: Record<string, unknown>;
+  status: string;
+  scheduled_at: string;
+  sent_at?: string;
+  fail_reason?: string;
+}

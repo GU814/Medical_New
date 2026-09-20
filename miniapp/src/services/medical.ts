@@ -49,6 +49,21 @@ export function createShare(recordId: number, ttlHours = 72) {
   })
 }
 
+/** 分享落地页:公开读取脱敏报告(无需登录) */
+export function getShareView(token: string) {
+  return request<{
+    patient_age?: number;
+    patient_gender?: string;
+    report?: string;
+    visit_date?: string;
+    disclaimer?: string;
+  }>({
+    url: `/api/share/${token}`,
+    method: 'GET',
+    auth: false,
+  })
+}
+
 /**
  * 导出 PDF:小程序需用 Taro.downloadFile + openDocument
  */

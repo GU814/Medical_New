@@ -217,3 +217,101 @@ def get_record(record_id: int, user_id: int) -> Optional[dict]:
         )
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+# ==================== user_locations(地理位置) ====================
+
+def add_location(user_id: int, name: str, address: str = None,
+                 latitude: float = None, longitude: float = None, is_default: bool = False) -> int:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        if is_default:
+            conn.execute("UPDATE user_locations SET is_default=0 WHERE user_id=?", (user_id,))
+        cur = conn.execute(
+            "INSERT INTO user_locations(user_id, name, address, latitude, longitude, is_default, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, name, address, latitude, longitude, 1 if is_default else 0, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_locations(user_id: int) -> list:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM user_locations WHERE user_id=? "
+            "ORDER BY is_default DESC, created_at DESC",
+            (user_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def delete_location(loc_id: int, user_id: int):
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM user_locations WHERE id=? AND user_id=?", (loc_id, user_id)
+        )
+        conn.commit()
+
+
+def set_default_location(loc_id: int, user_id: int):
+    with get_conn() as conn:
+        conn.execute("UPDATE user_locations SET is_default=0 WHERE user_id=?", (user_id,))
+        conn.execute(
+            "UPDATE user_locations SET is_default=1 WHERE id=? AND user_id=?", (loc_id, user_id)
+        )
+        conn.commit()
+
+
+# ==================== user_subscriptions(订阅授权) ====================
+
+def upsert_subscription(user_id: int, template_id: str, scene: str = None):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO user_subscriptions(user_id, template_id, scene, authorized_at, status) "
+            "VALUES (?, ?, ?, ?, 'authorized') "
+            "ON CONFLICT(user_id, template_id) DO UPDATE SET "
+            "scene=excluded.scene, authorized_at=excluded.authorized_at, status='authorized'",
+            (user_id, template_id, scene, now),
+        )
+        conn.commit()
+
+
+# ==================== reminders(提醒) ====================
+
+def create_reminder(user_id: int, template_id: str, data_json: str, scheduled_at: str) -> int:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO reminders(user_id, template_id, data_json, status, scheduled_at, created_at) "
+            "VALUES (?, ?, ?, 'scheduled', ?, ?)",
+            (user_id, template_id, data_json, scheduled_at, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_reminders(user_id: int) -> list:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM reminders WHERE user_id=? ORDER BY scheduled_at DESC", (user_id,)
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def mark_reminder_sent(reminder_id: int):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE reminders SET status='sent', sent_at=? WHERE id=?", (now, reminder_id)
+        )
+        conn.commit()
+
+
+def mark_reminder_failed(reminder_id: int, reason: str):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE reminders SET status='failed', fail_reason=? WHERE id=?", (reason, reminder_id)
+        )
+        conn.commit()

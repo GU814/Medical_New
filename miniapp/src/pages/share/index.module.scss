@@ -1,0 +1,59 @@
+.container {
+  min-height: 100vh;
+  background: #f7fafd;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.state {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f7fafd;
+}
+
+.stateText {
+  color: #86909c;
+  font-size: 28px;
+}
+
+.header {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.title {
+  display: block;
+  font-size: 34px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.meta {
+  display: block;
+  font-size: 24px;
+  color: #86909c;
+  margin-top: 8px;
+}
+
+.report {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.disclaimer {
+  background: #fff7e8;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.disclaimer Text {
+  font-size: 22px;
+  color: #a05b14;
+  line-height: 1.6;
+}

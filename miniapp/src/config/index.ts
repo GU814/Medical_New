@@ -14,6 +14,15 @@ export const STORAGE_KEYS = {
   SESSION_ID: 'mb_session_id',
 }
 
+// 订阅消息模板 ID(场景 -> 小程序后台申请的模板 ID)
+// 留空则该场景不弹授权,待上线前在微信后台申请后填入
+export const SUBSCRIBE_TEMPLATES: Record<string, string> = {
+  consult_done: '', // 问诊完成 / 复诊提醒
+}
+
+// 客服会话来源标识(便于后台区分入口)
+export const CONTACT_SESSION_FROM = 'medical_bot_profile'
+
 // 问诊阶段定义
 export const STAGES = [
   { value: 1, label: '基本信息' },

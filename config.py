@@ -5,6 +5,7 @@
 
 import os
 import sys
+import json
 
 # ==================== 路径基础 ====================
 # 打包后数据应存放在 EXE 同级目录，而非临时解压目录
@@ -117,6 +118,18 @@ WX_SECRET = os.environ.get("WX_SECRET", "")
 
 # code2session 调用基础地址
 WX_API_BASE = os.environ.get("WX_API_BASE", "https://api.weixin.qq.com")
+
+# 订阅消息模板:场景 -> 模板 ID,JSON 字符串注入(如 '{"consult_done":"TplIdxxx"}')
+# 留空则进入 dev 降级(发信用 mock 返回,不触网)
+WX_SUBSCRIBE_TEMPLATES = {}
+_WX_SUB_RAW = os.environ.get("WX_SUBSCRIBE_TEMPLATES", "{}")
+try:
+    WX_SUBSCRIBE_TEMPLATES = json.loads(_WX_SUB_RAW) if isinstance(_WX_SUB_RAW, str) else _WX_SUB_RAW
+except Exception:
+    WX_SUBSCRIBE_TEMPLATES = {}
+
+# 小程序码默认落地页(仅 page 路径,不带 query)
+WXACODE_DEFAULT_PAGE = os.environ.get("WXACODE_DEFAULT_PAGE", "pages/index/index")
 
 # ==================== CORS 配置 ====================
 # 小程序无 CORS 限制,但分享落地页/Web 调试需要;逗号分隔多域名

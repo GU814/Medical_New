@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, Input, Button } from '@tarojs/components';
 import Taro, { useDidShow } from '@tarojs/taro';
 import { getProfile, updateProfile, logout, isLoggedIn } from '@/services/auth';
-import { STORAGE_KEYS } from '@/config';
+import { requestConsultDoneSubscribe } from '@/services/subscribe';
+import { STORAGE_KEYS, CONTACT_SESSION_FROM } from '@/config';
 import type { UserProfile } from '@/types';
 import styles from './index.module.scss';
 
@@ -93,6 +94,13 @@ function ProfilePage() {
 
   const goPrivacy = () => Taro.navigateTo({ url: '/pages/privacy/index' });
   const goRecords = () => Taro.switchTab({ url: '/pages/records/index' });
+  const goLocation = () => Taro.navigateTo({ url: '/pages/location/index' });
+  const handleSubscribe = async () => {
+    Taro.showLoading({ title: '请求授权…', mask: true });
+    await requestConsultDoneSubscribe();
+    Taro.hideLoading();
+    Taro.showToast({ title: '可在弹窗中允许复诊提醒', icon: 'none' });
+  };
 
   const formatDate = (iso?: string) =>
     iso ? iso.replace('T', ' ').slice(0, 10) : '';
@@ -200,6 +208,31 @@ function ProfilePage() {
         </View>
         <Text className={styles.menuArrow}>›</Text>
       </View>
+
+      <View className={styles.menuItem} onClick={goLocation}>
+        <View className={styles.menuText}>
+          <Text className={styles.menuIcon}>📍</Text>
+          <Text className={styles.menuLabel}>我的地点</Text>
+        </View>
+        <Text className={styles.menuArrow}>›</Text>
+      </View>
+
+      <View className={styles.menuItem} onClick={handleSubscribe}>
+        <View className={styles.menuText}>
+          <Text className={styles.menuIcon}>🔔</Text>
+          <Text className={styles.menuLabel}>订阅复诊提醒</Text>
+        </View>
+        <Text className={styles.menuArrow}>›</Text>
+      </View>
+
+      {/* 联系客服:微信原生入口,点击唤起客服会话(无需后端) */}
+      <Button className={styles.contactBtn} open-type="contact" session-from={CONTACT_SESSION_FROM}>
+        <View className={styles.menuText}>
+          <Text className={styles.menuIcon}>💬</Text>
+          <Text className={styles.menuLabel}>联系客服</Text>
+        </View>
+        <Text className={styles.menuArrow}>›</Text>
+      </Button>
 
       {/* 登出 */}
       <Button className={styles.logoutBtn} onClick={handleLogout}>
