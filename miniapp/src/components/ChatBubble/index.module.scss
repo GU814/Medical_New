@@ -67,3 +67,20 @@
   font-size: $font-size-xs;
   color: $color-accent-orange;
 }
+
+// 多模态:用户气泡内的图片缩略图
+.bubbleImage {
+  width: 320rpx;
+  max-height: 320rpx;
+  border-radius: $radius-md;
+  margin-bottom: $spacing-sm;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+// 语音/图片识别角标
+.multimodalTag {
+  display: inline-block;
+  font-size: $font-size-xs;
+  color: $color-text-tertiary;
+  margin-bottom: $spacing-xs;
+}

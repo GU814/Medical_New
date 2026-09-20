@@ -49,6 +49,33 @@
   border-top: 1rpx solid $color-divider;
 }
 
+// 多模态入口按钮(语音/图片)
+.iconBtn {
+  flex-shrink: 0;
+  width: 72rpx;
+  height: 72rpx;
+  margin-right: $spacing-sm;
+  padding: 0;
+  border-radius: $radius-md;
+  background: $color-bg-page;
+  color: $color-text-primary;
+  font-size: 36rpx;
+  line-height: 72rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all $transition-base;
+  &:active {
+    opacity: 0.85;
+  }
+}
+
+.iconBtnRecording {
+  background: rgba(255, 77, 79, 0.12);
+  color: #ff4d4f;
+  animation: blink 1.4s infinite both;
+}
+
 .input {
   flex: 1;
   min-height: 72rpx;

@@ -29,6 +29,10 @@ export interface ChatMessage {
   content: string;
   isReport?: boolean;
   streaming?: boolean;
+  // 多模态输入:用户上传的图片(本地临时路径),用于气泡内缩略图展示
+  imageUrl?: string;
+  // 该条是否为语音/图片识别生成(用于气泡角标,可选)
+  fromMultimodal?: 'voice' | 'image';
 }
 
 export interface RecordListItem {

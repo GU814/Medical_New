@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, Textarea, Button } from '@tarojs/components';
 import Taro, { useDidShow } from '@tarojs/taro';
 import classnames from 'classnames';
@@ -11,6 +11,7 @@ import {
   getSessionHistory,
   resetSession,
 } from '@/services/medical';
+import { recognizeSpeech, recognizeImage } from '@/services/multimodal';
 import { STORAGE_KEYS } from '@/config';
 import type { ChatMessage } from '@/types';
 import styles from './index.module.scss';
@@ -19,12 +20,13 @@ const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
   content:
-    '您好,我是 AI 问诊助手。请描述您的主要症状或不适,我将引导您完成问诊并生成报告。\n\n例如:头痛三天,伴有恶心。',
+    '您好,我是 AI 问诊助手。请描述您的主要症状或不适,我将引导您完成问诊并生成报告。\n\n例如:头痛三天,伴有恶心。\n\n您也可以点按 🎤 语音描述,或点按 🖼️ 上传检查单/病历照片。',
 };
 
 /**
  * 问诊页 - 核心交互页
  * 流程:加载/创建会话 -> 加载历史 -> SSE 流式发送 -> 处理 reply/report/end 事件
+ * 多模态入口:🎤 语音识别、🖼️ 图片识别,识别结果作为文本输入复用同一套问诊流程。
  */
 function ConsultPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -34,19 +36,47 @@ function ConsultPage() {
   const [currentStage, setCurrentStage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [scrollAnchor, setScrollAnchor] = useState('');
+  // 多模态交互态:录音中 / 上传识别中
+  const [recording, setRecording] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
   const abortRef = useRef<{ abort: () => void } | null>(null);
+  // 用 ref 保存最新会话/发送态,供录音回调(挂载时注册一次)安全读取
+  const sessionIdRef = useRef<string | null>(null);
+  const sendingRef = useRef(false);
+  const recorderRef = useRef<Taro.RecorderManager | null>(null);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  // 注册录音管理器(仅一次):停止/出错回调通过 ref 读取最新状态
+  useEffect(() => {
+    const rm = Taro.getRecorderManager();
+    rm.onStop((res) => {
+      setRecording(false);
+      void handleSpeechResult(res.tempFilePath);
+    });
+    rm.onError((err) => {
+      setRecording(false);
+      const msg = (err as { errMsg?: string })?.errMsg || '';
+      Taro.showToast({
+        title: msg.includes('auth') ? '请允许麦克风权限后重试' : '录音失败,请重试',
+        icon: 'none',
+      });
+    });
+    recorderRef.current = rm;
+  }, []);
 
   const loadSession = async () => {
     setLoading(true);
     try {
-      // 优先使用本地缓存的 session_id
       const cached = Taro.getStorageSync(STORAGE_KEYS.SESSION_ID) as string;
       if (cached) {
         setSessionId(cached);
         await loadHistory(cached);
         return;
       }
-      // 拉取最近会话
       try {
         const latest = await getLatestSession();
         setSessionId(latest.session_id);
@@ -58,7 +88,6 @@ function ConsultPage() {
           setMessages([WELCOME_MESSAGE]);
         }
       } catch {
-        // 无最近会话 -> 新建
         await createNewSession();
       }
     } catch (err) {
@@ -81,6 +110,7 @@ function ConsultPage() {
         role: item.role === 'user' ? 'user' : 'assistant',
         content: item.content,
         isReport: item.role === 'assistant' && item.content.includes('## '),
+        imageUrl: (item as { image_url?: string }).image_url,
       }));
       setMessages(history);
       setTimeout(scrollToBottom, 100);
@@ -105,8 +135,8 @@ function ConsultPage() {
   };
 
   const handleReset = async () => {
-    if (sending) {
-      Taro.showToast({ title: '请等待当前回复结束', icon: 'none' });
+    if (sending || recording || uploading) {
+      Taro.showToast({ title: '请等待当前操作结束', icon: 'none' });
       return;
     }
     const res = await Taro.showModal({
@@ -116,7 +146,6 @@ function ConsultPage() {
     });
     if (!res.confirm) return;
     try {
-      // 已有会话则重置,否则新建
       if (sessionId) {
         const session = await resetSession(sessionId);
         setSessionId(session.session_id);
@@ -134,22 +163,18 @@ function ConsultPage() {
     }
   };
 
-  const sendMessage = async () => {
-    const text = input.trim();
-    if (!text || !sessionId || sending) return;
+  // ============ 核心:把一段文本作为用户输入,跑现有 SSE 问诊流程 ============
+  const runChatTurn = (messageText: string, userMsg: ChatMessage) => {
+    const sid = sessionIdRef.current;
+    if (!messageText.trim() || !sid || sendingRef.current) return;
 
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: text,
-    };
+    const typingId = `bot-${Date.now()}`;
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setSending(true);
+    sendingRef.current = true;
     scrollToBottom();
 
-    // 插入占位的助手消息(流式追加)
-    const typingId = `bot-${Date.now()}`;
     setMessages((prev) => [
       ...prev,
       { id: typingId, role: 'assistant', content: '', streaming: true },
@@ -159,21 +184,17 @@ function ConsultPage() {
     abortRef.current?.abort();
     const controller = streamChat({
       url: '/api/chat',
-      body: { message: text, session_id: sessionId },
+      body: { message: messageText, session_id: sid },
       onEvent: (ev) => {
         switch (ev.event) {
           case 'reply':
-            // 增量追加回复内容
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === typingId
-                  ? { ...m, content: m.content + ev.data, streaming: true }
-                  : m
+                m.id === typingId ? { ...m, content: m.content + ev.data, streaming: true } : m
               )
             );
             break;
           case 'report':
-            // 报告同样是分块流式:必须累加,不能直接覆盖
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === typingId
@@ -188,7 +209,6 @@ function ConsultPage() {
             );
             break;
           case 'end':
-            // 单轮结束:用后端清洗后的 reply_clean 定稿(兜底剥离思维链/JSON块)
             try {
               const endData = JSON.parse(ev.data);
               if (endData.stage) setCurrentStage(endData.stage);
@@ -199,26 +219,19 @@ function ConsultPage() {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === typingId
-                    ? {
-                        ...m,
-                        content: finalText ?? m.content,
-                        streaming: false,
-                      }
+                    ? { ...m, content: finalText ?? m.content, streaming: false }
                     : m
                 )
               );
             } catch {
               setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === typingId ? { ...m, streaming: false } : m
-                )
+                prev.map((m) => (m.id === typingId ? { ...m, streaming: false } : m))
               );
             }
             setSending(false);
+            sendingRef.current = false;
             break;
           case 'report_done':
-            // report_done 的 data 是 {"stage":..,"is_complete":..} 元信息,
-            // 不能拿来当正文,否则会把 JSON 覆盖到报告气泡上
             try {
               const doneData = JSON.parse(ev.data);
               if (doneData.stage) setCurrentStage(doneData.stage);
@@ -231,47 +244,150 @@ function ConsultPage() {
               )
             );
             setSending(false);
+            sendingRef.current = false;
             break;
           case 'error':
             setMessages((prev) =>
-              prev.filter((m) => m.id !== typingId).concat({
-                id: `err-${Date.now()}`,
-                role: 'assistant',
-                content: `⚠️ ${ev.data || '服务异常'}`,
-              })
+              prev
+                .filter((m) => m.id !== typingId)
+                .concat({
+                  id: `err-${Date.now()}`,
+                  role: 'assistant',
+                  content: `⚠️ ${ev.data || '服务异常'}`,
+                })
             );
             setSending(false);
+            sendingRef.current = false;
             break;
         }
         scrollToBottom();
       },
       onError: (err) => {
         setMessages((prev) =>
-          prev.filter((m) => m.id !== typingId).concat({
-            id: `err-${Date.now()}`,
-            role: 'assistant',
-            content: `⚠️ 发送失败:${err instanceof Error ? err.message : '网络错误'}`,
-          })
+          prev
+            .filter((m) => m.id !== typingId)
+            .concat({
+              id: `err-${Date.now()}`,
+              role: 'assistant',
+              content: `⚠️ 发送失败:${err instanceof Error ? err.message : '网络错误'}`,
+            })
         );
         setSending(false);
+        sendingRef.current = false;
         scrollToBottom();
       },
     });
     abortRef.current = controller;
   };
 
-  // 滚动到底部:先清空再设值,强制触发 scroll-into-view
+  // 文字发送
+  const sendMessage = () => {
+    const text = input.trim();
+    if (!text || !sessionId || sending || recording || uploading) return;
+    runChatTurn(text, { id: `user-${Date.now()}`, role: 'user', content: text });
+  };
+
+  // ============ 语音识别入口 ============
+  const toggleRecord = () => {
+    if (sending || uploading) return;
+    const rm = recorderRef.current;
+    if (!rm) return;
+    if (recording) {
+      rm.stop();
+    } else {
+      setRecording(true);
+      Taro.showToast({ title: '正在录音,再次点击结束', icon: 'none' });
+      try {
+        rm.start({
+          duration: 60000,
+          format: 'mp3',
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          encodeBitRate: 24000,
+        });
+      } catch (e) {
+        setRecording(false);
+        Taro.showToast({ title: '无法开始录音', icon: 'none' });
+        console.error('[Consult] 录音启动失败', e);
+      }
+    }
+  };
+
+  const handleSpeechResult = async (tempFilePath?: string) => {
+    if (!tempFilePath) return;
+    setUploading(true);
+    try {
+      const { text } = await recognizeSpeech(tempFilePath);
+      if (!text) {
+        Taro.showToast({ title: '未识别到内容,请重试或用文字', icon: 'none' });
+        return;
+      }
+      runChatTurn(text, {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: text,
+        fromMultimodal: 'voice',
+      });
+    } catch (e) {
+      Taro.showToast({ title: errMsg(e), icon: 'none' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ============ 图片识别入口 ============
+  const pickImage = async () => {
+    if (sending || recording || uploading) return;
+    let res: Taro.chooseMedia.SuccessCallbackResult;
+    try {
+      res = await Taro.chooseMedia({
+        mediaType: ['image'],
+        count: 1,
+        sourceType: ['album', 'camera'],
+        sizeType: ['compressed'],
+      });
+    } catch {
+      // 用户取消或拒绝相册/相机权限:静默返回,不打扰
+      return;
+    }
+    const file = res.tempFiles?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { text } = await recognizeImage(file.tempFilePath);
+      if (!text) {
+        Taro.showToast({ title: '未识别到信息,请换一张', icon: 'none' });
+        return;
+      }
+      runChatTurn(text, {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: text,
+        imageUrl: file.tempFilePath,
+        fromMultimodal: 'image',
+      });
+    } catch (e) {
+      Taro.showToast({ title: errMsg(e), icon: 'none' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const errMsg = (e: unknown): string =>
+    e instanceof Error ? e.message : '识别失败,请重试';
+
+  // 滚动到底部
   const scrollToBottom = () => {
     setScrollAnchor('');
     setTimeout(() => setScrollAnchor('msg-bottom'), 50);
   };
 
-  // 页面显示时加载会话(放在函数定义之后,避免 use-before-define)
   useDidShow(() => {
     loadSession();
   });
 
   const isEmpty = messages.length === 0;
+  const inputDisabled = sending || recording || uploading;
 
   return (
     <View className={styles.container}>
@@ -308,17 +424,33 @@ function ConsultPage() {
               content={msg.content}
               isReport={msg.isReport}
               streaming={msg.streaming}
+              imageUrl={msg.imageUrl}
+              fromMultimodal={msg.fromMultimodal}
             />
           ))
         )}
         <View id="msg-bottom" />
       </ScrollView>
       <View className={styles.inputBar}>
+        <Button
+          className={classnames(styles.iconBtn, recording && styles.iconBtnRecording)}
+          disabled={sending || uploading}
+          onClick={toggleRecord}
+        >
+          {recording ? '■' : '🎤'}
+        </Button>
+        <Button
+          className={styles.iconBtn}
+          disabled={inputDisabled}
+          onClick={pickImage}
+        >
+          {uploading ? '⏳' : '🖼️'}
+        </Button>
         <Textarea
           className={styles.input}
           value={input}
           onInput={(e) => setInput(e.detail.value)}
-          placeholder="请输入您的症状或问题…"
+          placeholder={recording ? '正在录音…' : '请输入您的症状或问题…'}
           maxlength={500}
           autoHeight
           showConfirmBar={false}
@@ -327,9 +459,9 @@ function ConsultPage() {
         <Button
           className={classnames(
             styles.sendBtn,
-            (!input.trim() || sending) && styles.sendBtnDisabled
+            (!input.trim() || inputDisabled) && styles.sendBtnDisabled
           )}
-          disabled={!input.trim() || sending}
+          disabled={!input.trim() || inputDisabled}
           onClick={sendMessage}
         >
           {sending ? (

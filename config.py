@@ -89,6 +89,32 @@ MEMORY_TOP_K = int(os.environ.get("MEMORY_TOP_K", "3"))
 # 写入记忆的最小片段长度(过短的"是/否"类答复不写入,降低噪声)
 MEMORY_MIN_LEN = int(os.environ.get("MEMORY_MIN_LEN", "8"))
 
+# ==================== 多模态输入(语音/图片识别)配置 ====================
+# 语音识别(ASR):基于 OpenAI 兼容的 /v1/audio/transcriptions 接口。
+# 本地 Ollama 需先 `ollama pull whisper`;OpenAI 则直接用 whisper-1。
+# 默认关闭,避免在未配置语音模型时影响现有问诊流程。
+ASR_ENABLED = os.environ.get("ASR_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+ASR_MODEL = os.environ.get("ASR_MODEL", "whisper")
+ASR_API_BASE_URL = os.environ.get("ASR_API_BASE_URL", API_BASE_URL)
+ASR_API_KEY = os.environ.get("ASR_API_KEY", API_KEY)
+ASR_MAX_SIZE_MB = int(os.environ.get("ASR_MAX_SIZE_MB", "10"))
+ASR_SUPPORTED_FORMATS = tuple(
+    o.strip().lower() for o in os.environ.get("ASR_SUPPORTED_FORMATS", "mp3,wav,m4a,amr,pcm").split(",") if o.strip()
+)
+
+# 图片识别(Vision):基于 OpenAI 兼容多模态 chat(消息内含 image_url)。
+# 需多模态模型:本地 Ollama 可 `ollama pull llava` 或 `qwen2.5vl`;OpenAI 用 gpt-4o-mini 等。
+# 默认关闭,避免用非多模态主模型去识别图片导致失败。
+VISION_ENABLED = os.environ.get("VISION_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+VISION_MODEL = os.environ.get("VISION_MODEL", MODEL_NAME)
+VISION_API_BASE_URL = os.environ.get("VISION_API_BASE_URL", API_BASE_URL)
+VISION_API_KEY = os.environ.get("VISION_API_KEY", API_KEY)
+VISION_MAX_SIZE_MB = int(os.environ.get("VISION_MAX_SIZE_MB", "10"))
+VISION_MAX_TOKENS = int(os.environ.get("VISION_MAX_TOKENS", "1500"))
+VISION_SUPPORTED_FORMATS = tuple(
+    o.strip().lower() for o in os.environ.get("VISION_SUPPORTED_FORMATS", "jpg,jpeg,png,webp,bmp,gif").split(",") if o.strip()
+)
+
 # ==================== 服务配置 ====================
 # DESKTOP_MODE=True 时保留单机桌面行为(旧 /chat 等路由 + Ollama 自动安装 + 自动开浏览器)
 # DESKTOP_MODE=False 时作为小程序后端 API 服务器,启用 app/ 包的路由与中间件
