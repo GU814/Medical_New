@@ -28,9 +28,35 @@ export function streamChat(opts: SSEStreamOptions): { abort: () => void } {
   let buffer = ''
   let finished = false
 
+  // 看门狗:超过 SSE_IDLE_TIMEOUT 未收到任何 chunk 视为连接静默挂死
+  // (服务端进程被杀但 TCP 未断时,既无 fail 也无 end,否则 sending 会永久卡死)
+  const SSE_IDLE_TIMEOUT = 90_000
+  let watchdog: ReturnType<typeof setTimeout> | null = null
+  const clearWatchdog = () => {
+    if (watchdog) {
+      clearTimeout(watchdog)
+      watchdog = null
+    }
+  }
+  const resetWatchdog = () => {
+    clearWatchdog()
+    watchdog = setTimeout(() => {
+      if (finished) return
+      console.warn('[SSE] 空闲超时,主动断开')
+      try {
+        ;(requestTask as { abort?: () => void })?.abort?.()
+      } catch (e) {
+        /* ignore */
+      }
+      onError?.(new Error('连接超时，请重试'))
+      finish()
+    }, SSE_IDLE_TIMEOUT)
+  }
+
   const finish = () => {
     if (finished) return
     finished = true
+    clearWatchdog()
     onComplete?.()
   }
 
@@ -86,6 +112,7 @@ export function streamChat(opts: SSEStreamOptions): { abort: () => void } {
   if (requestTask && typeof (requestTask as { onChunkReceived?: unknown }).onChunkReceived === 'function') {
     ;(requestTask as { onChunkReceived: (cb: (res: { data: ArrayBuffer }) => void) => void }).onChunkReceived((res) => {
       try {
+        resetWatchdog()
         const text = arrayBufferToString(res.data)
         buffer += text
         parseBuffer()

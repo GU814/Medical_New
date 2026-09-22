@@ -9,7 +9,9 @@ import {
   createSession,
   getLatestSession,
   getSessionHistory,
-  resetSession,
+  getSessionReport,
+  listSessions,
+  retryReport,
 } from '@/services/medical';
 import { recognizeSpeech, recognizeImage } from '@/services/multimodal';
 import { STORAGE_KEYS } from '@/config';
@@ -45,6 +47,122 @@ function ConsultPage() {
   const sessionIdRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const recorderRef = useRef<Taro.RecorderManager | null>(null);
+  // 后台报告轮询定时器(报告由后端任务生成,前端轮询拿取结果)
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearPoll = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
+
+  // 组件卸载时清理轮询与进行中的流
+  useEffect(() => {
+    return () => {
+      clearPoll();
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const REPORT_PENDING_ID = 'report-pending';
+
+  // 展示"报告生成中"占位气泡(复用 streaming 指示,不新增样式)
+  const showPendingBubble = () => {
+    setMessages((prev) =>
+      prev.some((m) => m.id === REPORT_PENDING_ID)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: REPORT_PENDING_ID,
+              role: 'assistant' as const,
+              content: '📋 正在为您生成问诊报告,请稍候…',
+              streaming: true,
+            },
+          ]
+    );
+    scrollToBottom();
+  };
+
+  // 用后台返回的报告正文替换占位气泡
+  const appendReportBubble = (report: string) => {
+    setMessages((prev) =>
+      prev
+        .filter((m) => m.id !== REPORT_PENDING_ID)
+        .some((m) => m.isReport)
+        ? prev.filter((m) => m.id !== REPORT_PENDING_ID)
+        : [
+            ...prev.filter((m) => m.id !== REPORT_PENDING_ID),
+            {
+              id: `report-${Date.now()}`,
+              role: 'assistant' as const,
+              content: report,
+              isReport: true,
+            },
+          ]
+    );
+    scrollToBottom();
+  };
+
+  /**
+   * 轮询后台报告状态(断点续传核心):
+   * running/pending -> 3s 后继续;done -> 渲染报告;failed -> 自动重试一次,再失败提示。
+   */
+  const pollReport = (sid: string) => {
+    clearPoll();
+    let ticks = 0;
+    let retriedOnce = false;
+    pollTimerRef.current = setInterval(async () => {
+      ticks += 1;
+      if (ticks > 100) {
+        // 约 5 分钟仍未完成:停止轮询,保留占位气泡,下次进页会重新续接
+        clearPoll();
+        return;
+      }
+      try {
+        const st = await getSessionReport(sid);
+        if (st.report_status === 'done' && st.report) {
+          appendReportBubble(st.report);
+          clearPoll();
+          return;
+        }
+        if (st.report_status === 'failed') {
+          if (!retriedOnce) {
+            retriedOnce = true;
+            await retryReport(sid);
+            return;
+          }
+          clearPoll();
+          Taro.showToast({ title: '报告生成失败,请稍后重进本页重试', icon: 'none' });
+        }
+        // none/pending/running: 继续轮询
+      } catch {
+        /* 网络抖动忽略,下一轮继续 */
+      }
+    }, 3000);
+  };
+
+  /**
+   * 进入页面时的断点续传检查:
+   * - 报告生成中 -> 续接轮询;
+   * - 已生成但历史里没有(旧会话/历史接口截断) -> 直接展示;
+   * - 失败 -> 提示可重试。
+   */
+  const resumeReportCheck = async (sid: string, hasReportInHistory: boolean) => {
+    try {
+      const st = await getSessionReport(sid);
+      if (st.report_status === 'pending' || st.report_status === 'running') {
+        showPendingBubble();
+        pollReport(sid);
+      } else if (st.report_status === 'done' && st.report && !hasReportInHistory) {
+        appendReportBubble(st.report);
+      }
+      // none/failed: 保持安静,不打扰用户
+    } catch {
+      /* 会话不存在或网络异常:忽略 */
+    }
+  };
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -74,20 +192,21 @@ function ConsultPage() {
       const cached = Taro.getStorageSync(STORAGE_KEYS.SESSION_ID) as string;
       if (cached) {
         setSessionId(cached);
-        await loadHistory(cached);
+        const hasReport = await loadHistory(cached);
+        await resumeReportCheck(cached, hasReport);
         return;
       }
       try {
+        // 复用最近一条会话(不论是否已完成),保证历史可回溯;
+        // 只有当该用户从未有过会话时后端才返回 404,此时才新建。
         const latest = await getLatestSession();
         setSessionId(latest.session_id);
         setCurrentStage(latest.stage);
         Taro.setStorageSync(STORAGE_KEYS.SESSION_ID, latest.session_id);
-        if (!latest.is_complete) {
-          await loadHistory(latest.session_id);
-        } else {
-          setMessages([WELCOME_MESSAGE]);
-        }
+        const hasReport = await loadHistory(latest.session_id);
+        await resumeReportCheck(latest.session_id, hasReport);
       } catch {
+        // 该用户暂无任何会话:静默降级为新建,无需提示用户。
         await createNewSession();
       }
     } catch (err) {
@@ -98,12 +217,12 @@ function ConsultPage() {
     }
   };
 
-  const loadHistory = async (sid: string) => {
+  const loadHistory = async (sid: string): Promise<boolean> => {
     try {
       const { items } = await getSessionHistory(sid, 0, 50);
       if (!items || items.length === 0) {
         setMessages([WELCOME_MESSAGE]);
-        return;
+        return false;
       }
       const history: ChatMessage[] = items.map((item, idx) => ({
         id: `history-${idx}`,
@@ -114,9 +233,11 @@ function ConsultPage() {
       }));
       setMessages(history);
       setTimeout(scrollToBottom, 100);
+      return history.some((m) => m.isReport);
     } catch (err) {
       console.error('[Consult] 加载历史失败', err);
       setMessages([WELCOME_MESSAGE]);
+      return false;
     }
   };
 
@@ -134,32 +255,63 @@ function ConsultPage() {
     }
   };
 
-  const handleReset = async () => {
+  // 主动「新建对话」:只新建,不删除旧会话(旧会话仍可从「历史会话」回溯)
+  const handleNewSession = async () => {
     if (sending || recording || uploading) {
       Taro.showToast({ title: '请等待当前操作结束', icon: 'none' });
       return;
     }
     const res = await Taro.showModal({
-      title: '重置问诊',
-      content: '将清空当前对话并开始新的问诊,确定继续?',
+      title: '新建对话',
+      content: '开始一个新的问诊对话?当前对话会保留,可在「历史会话」中查看。',
       confirmColor: '#165dff',
     });
     if (!res.confirm) return;
     try {
-      if (sessionId) {
-        const session = await resetSession(sessionId);
-        setSessionId(session.session_id);
-        setCurrentStage(session.stage);
-        Taro.setStorageSync(STORAGE_KEYS.SESSION_ID, session.session_id);
-      } else {
-        await createNewSession();
-      }
-      setMessages([WELCOME_MESSAGE]);
+      clearPoll();
+      await createNewSession();
       setInput('');
-      Taro.showToast({ title: '已重置', icon: 'success' });
+      Taro.showToast({ title: '已新建对话', icon: 'success' });
     } catch (err) {
-      console.error('[Consult] 重置失败', err);
-      Taro.showToast({ title: '重置失败', icon: 'none' });
+      console.error('[Consult] 新建会话失败', err);
+      Taro.showToast({ title: '新建失败', icon: 'none' });
+    }
+  };
+
+  // 历史会话回溯:列出该用户全部会话,选择后加载其完整消息
+  const handleHistory = async () => {
+    if (sending || recording || uploading) {
+      Taro.showToast({ title: '请等待当前操作结束', icon: 'none' });
+      return;
+    }
+    try {
+      const { items } = await listSessions(20);
+      if (!items || items.length === 0) {
+        Taro.showToast({ title: '暂无历史会话', icon: 'none' });
+        return;
+      }
+      // 微信 showActionSheet 最多 6 项
+      const shown = items.slice(0, 6);
+      const labels = shown.map((s) => {
+        const time = (s.updated_at || '').slice(5, 16);
+        const title = s.title || (s.message_count ? '对话记录' : '空会话');
+        const cur = s.session_id === sessionId ? ' · 当前' : '';
+        return `${time} ${title}${cur}`;
+      });
+      const picked = await Taro.showActionSheet({ itemList: labels });
+      const target = shown[picked.tapIndex];
+      if (!target || target.session_id === sessionId) return;
+      clearPoll();
+      setSessionId(target.session_id);
+      setCurrentStage(target.stage || 1);
+      Taro.setStorageSync(STORAGE_KEYS.SESSION_ID, target.session_id);
+      const hasReport = await loadHistory(target.session_id);
+      await resumeReportCheck(target.session_id, hasReport);
+    } catch (err) {
+      // 用户点击取消会走进 catch,静默忽略
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('cancel')) return;
+      console.error('[Consult] 加载会话列表失败', err);
     }
   };
 
@@ -187,6 +339,17 @@ function ConsultPage() {
       body: { message: messageText, session_id: sid },
       onEvent: (ev) => {
         switch (ev.event) {
+          case 'thinking':
+            // 推理模型的「思考过程」:累加到当前机器人气泡,不影响正文
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === typingId
+                  ? { ...m, thinking: (m.thinking || '') + ev.data }
+                  : m
+              )
+            );
+            scrollToBottom();
+            break;
           case 'reply':
             setMessages((prev) =>
               prev.map((m) =>
@@ -223,6 +386,19 @@ function ConsultPage() {
                     : m
                 )
               );
+              // 后台报告架构:问诊完成但报告未就绪 -> 展示占位气泡并轮询续传
+              const sid = sessionIdRef.current;
+              if (
+                sid &&
+                endData.is_complete &&
+                endData.report_status &&
+                endData.report_status !== 'done'
+              ) {
+                setTimeout(() => {
+                  showPendingBubble();
+                  pollReport(sid);
+                }, 300);
+              }
             } catch {
               setMessages((prev) =>
                 prev.map((m) => (m.id === typingId ? { ...m, streaming: false } : m))
@@ -394,8 +570,11 @@ function ConsultPage() {
       <View className={styles.stageBar}>
         <StageIndicator current={currentStage} />
       </View>
-      <Button className={styles.resetBtn} onClick={handleReset}>
-        重置会话
+      <Button className={styles.historyBtn} onClick={handleHistory}>
+        历史会话
+      </Button>
+      <Button className={styles.resetBtn} onClick={handleNewSession}>
+        新建对话
       </Button>
       <ScrollView
         className={styles.scrollArea}
@@ -404,32 +583,35 @@ function ConsultPage() {
         enhanced
         showScrollbar={false}
       >
-        {loading ? (
-          <View className={styles.emptyState}>
-            <Text className={styles.emptyIcon}>⏳</Text>
-            <Text className={styles.emptyText}>正在加载问诊…</Text>
-          </View>
-        ) : isEmpty ? (
-          <View className={styles.emptyState}>
-            <Text className={styles.emptyIcon}>💬</Text>
-            <Text className={styles.emptyText}>
-              开始描述您的症状,与 AI 医生对话
-            </Text>
-          </View>
-        ) : (
-          messages.map((msg) => (
-            <ChatBubble
-              key={msg.id}
-              role={msg.role}
-              content={msg.content}
-              isReport={msg.isReport}
-              streaming={msg.streaming}
-              imageUrl={msg.imageUrl}
-              fromMultimodal={msg.fromMultimodal}
-            />
-          ))
-        )}
-        <View id="msg-bottom" />
+        <View className={styles.scrollInner}>
+          {loading ? (
+            <View className={styles.emptyState}>
+              <Text className={styles.emptyIcon}>⏳</Text>
+              <Text className={styles.emptyText}>正在加载问诊…</Text>
+            </View>
+          ) : isEmpty ? (
+            <View className={styles.emptyState}>
+              <Text className={styles.emptyIcon}>💬</Text>
+              <Text className={styles.emptyText}>
+                开始描述您的症状,与 AI 医生对话
+              </Text>
+            </View>
+          ) : (
+            messages.map((msg) => (
+              <ChatBubble
+                key={msg.id}
+                role={msg.role}
+                content={msg.content}
+                isReport={msg.isReport}
+                streaming={msg.streaming}
+                imageUrl={msg.imageUrl}
+                fromMultimodal={msg.fromMultimodal}
+                thinking={msg.thinking}
+              />
+            ))
+          )}
+          <View id="msg-bottom" />
+        </View>
       </ScrollView>
       <View className={styles.inputBar}>
         <Button

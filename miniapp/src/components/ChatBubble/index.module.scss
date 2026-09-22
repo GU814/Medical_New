@@ -84,3 +84,45 @@
   color: $color-text-tertiary;
   margin-bottom: $spacing-xs;
 }
+
+// ==================== 思考过程(思维链) ====================
+.thinkingBlock {
+  margin-bottom: $spacing-sm;
+  padding: $spacing-xs $spacing-md;
+  background: rgba(22, 93, 255, 0.05);
+  border-left: 4rpx solid rgba(22, 93, 255, 0.35);
+  border-radius: $radius-sm;
+}
+
+.thinkingHeader {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.thinkingIcon {
+  font-size: $font-size-sm;
+  margin-right: $spacing-xs;
+}
+
+.thinkingTitle {
+  flex: 1;
+  font-size: $font-size-xs;
+  font-weight: $font-weight-medium;
+  color: $color-text-tertiary;
+}
+
+.thinkingToggle {
+  font-size: $font-size-xs;
+  color: $color-primary;
+}
+
+.thinkingContent {
+  display: block;
+  margin-top: $spacing-xs;
+  font-size: $font-size-sm;
+  line-height: $line-height-normal;
+  color: $color-text-secondary;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

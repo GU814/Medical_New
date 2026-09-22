@@ -67,7 +67,7 @@ export interface PagedResult<T> {
 }
 
 export interface SSEEvent {
-  event: 'reply' | 'report' | 'end' | 'report_done' | 'error';
+  event: 'reply' | 'report' | 'thinking' | 'end' | 'report_done' | 'error';
   data: string;
 }
 

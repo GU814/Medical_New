@@ -361,6 +361,11 @@ def _do_deep_analysis(patient_data: dict, knowledge_reference: str, history_refe
             system_prompt="你是一位经验丰富的医学专家，请基于提供的问诊信息进行专业、客观的深度诊断分析。",
             user_prompt=prompt,
             temperature=0.5,
+            # 原来这里不传 model，会回退到 config.MODEL_NAME(默认 deepseek-r1:8b)：
+            # 推理模型的思维链会把报告生成拖到数百秒，且与 REPORT_MODEL_NAME 不一致
+            # （深度分析用 A 模型、正文用 B 模型）。统一跟随 REPORT_MODEL_NAME。
+            model=config.REPORT_MODEL_NAME,
+            max_tokens=config.MAX_TOKENS,
         )
         return analysis
     except Exception as e:
@@ -389,6 +394,9 @@ def _generate_full_report(patient_data: dict, deep_analysis: str, history_refere
             system_prompt="你是一位专业的医学文书写作者。请严格按照大病历格式生成报告，问过什么写什么，没问过不写，禁止写占位文字。",
             user_prompt=prompt,
             temperature=0.5,
+            # 同上：非流式路径也统一用 REPORT_MODEL_NAME，避免回退到推理模型
+            model=config.REPORT_MODEL_NAME,
+            max_tokens=config.MAX_TOKENS,
         )
 
         # 确保报告末尾有免责声明

@@ -98,6 +98,8 @@ def chat(
     user_prompt: str,
     history: list = None,
     temperature: float = None,
+    model: str = None,
+    max_tokens: int = None,
 ) -> str:
     """
     调用 LLM 进行对话，返回回复文本
@@ -106,10 +108,16 @@ def chat(
         user_prompt: 用户消息
         history: 对话历史（可选），格式: [{"role": "user/assistant", "content": "..."}]
         temperature: 温度参数（可选）
+        model: 模型名（可选，默认 config.MODEL_NAME）。
+               报告生成等场景需显式指定 REPORT_MODEL_NAME，否则会回退到默认的推理模型，
+               思维链会把耗时放大十倍以上。
+        max_tokens: 输出预算（可选，默认 config.MAX_TOKENS）
     Returns:
         LLM 回复的文本内容
     """
     temperature = temperature if temperature is not None else config.DEFAULT_TEMPERATURE
+    model = model or config.MODEL_NAME
+    max_tokens = max_tokens if max_tokens is not None else config.MAX_TOKENS
     client = _get_client()
 
     # 构建消息列表
@@ -126,10 +134,10 @@ def chat(
     for attempt in range(1, config.LLM_MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
-                model=config.MODEL_NAME,
+                model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=config.MAX_TOKENS,
+                max_tokens=max_tokens,
             )
             result = response.choices[0].message.content.strip()
             logger.debug(f"LLM 调用成功（第 {attempt} 次），回复长度: {len(result)}")
@@ -252,6 +260,65 @@ def _strip_think_stream(delta: str, state: dict) -> str:
     return out
 
 
+def _tail_keep_len(suffix: str, tag: str) -> int:
+    """返回 suffix 末尾应扣留的长度:其末尾 k 个字符恰好是 tag 的前缀(0<=k<=len(tag))。
+    用于在标签被分片时,暂存可能是标签开头/结尾的一部分,避免提前透出半个标签。"""
+    max_hold = min(len(suffix), len(tag))
+    for k in range(max_hold, 0, -1):
+        if tag.startswith(suffix[-k:]):
+            return k
+    return 0
+
+
+def _split_think_stream(delta: str, state: dict) -> list:
+    """
+    把增量文本切分为 (kind, text) 片段,kind in {"think","content"}。
+    自动处理 <think>...</think> 标签被分片(跨多次 delta)的情况,标签本身不输出,
+    仅输出标签内的「思考正文」作为 think 片段、标签外的作为 content 片段。
+    跨 delta 的部分标签(如 "先<" 或 "...</think" 被切断)会暂存在 state["buf"],不提前透出。
+    state: 调用方需在多次调用间复用的 {"in_think": False, "buf": ""}
+    Returns:
+        片段列表,如 [("content", "你好"), ("think", "让我先判断…")]
+    """
+    segs: list = []
+    text = state["buf"] + delta
+    n = len(text)
+    i = 0
+    out = ""  # 累积的可见正文(相邻正文合并为一段)
+    while i < n:
+        if state["in_think"]:
+            end = text.find("</think>", i)
+            if end == -1:
+                # 思维链未闭合:扣留可能是 </think> 前缀的尾部,其余作为 think 透出
+                hold = _tail_keep_len(text[i:], "</think>")
+                emit = text[i:n - hold]
+                if emit:
+                    segs.append(("think", emit))
+                state["buf"] = text[n - hold:]
+                break
+            think_text = text[i:end]
+            if think_text:
+                segs.append(("think", think_text))
+            i = end + len("</think>")
+            state["in_think"] = False
+        else:
+            start = text.find("<think>", i)
+            if start == -1:
+                # 无新的思维链起点:扣留可能是 <think> 前缀的尾部,其余作为正文透出
+                hold = _tail_keep_len(text[i:], "<think>")
+                emit = text[i:n - hold]
+                if emit:
+                    out += emit
+                state["buf"] = text[n - hold:]
+                break
+            out += text[i:start]
+            i = start + len("<think>")
+            state["in_think"] = True
+    if out:
+        segs.append(("content", out))
+    return segs
+
+
 async def chat_stream(
     system_prompt: str,
     user_prompt: str,
@@ -259,10 +326,11 @@ async def chat_stream(
     temperature: float = None,
     model: str = None,
     max_tokens: int = None,
+    return_raw: bool = False,
 ) -> str:
     """
     异步流式调用 LLM，作为异步生成器逐段 yield 文本片段。
-    自动剥离 <think> 思维链（推理模型），对外部只暴露最终回答正文。
+    默认自动剥离 <think> 思维链（推理模型），对外部只暴露最终回答正文。
     Args:
         system_prompt: 系统提示词
         user_prompt: 用户消息
@@ -270,6 +338,8 @@ async def chat_stream(
         temperature: 温度参数（可选）
         model: 指定模型名（可选，默认用 config.CONSULT_MODEL_NAME）
         max_tokens: 单次生成上限（可选，默认用 config.CONSULT_MAX_TOKENS）
+        return_raw: 为 True 时原样透出(含 <think> 标签),交由调用方拆分 thinking/正文
+            （用于向后端实时转发「思考过程」）。默认 False 保持历史行为。
     Yields:
         文本片段（str）
     """
@@ -298,13 +368,24 @@ async def chat_stream(
             async for chunk in stream:
                 if not chunk.choices:
                     continue
-                delta = chunk.choices[0].delta.content
-                if not delta:
-                    continue
-                out = _strip_think_stream(delta, think_state)
-                if out:
-                    emitted_any = True
-                    yield out
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None) or ""
+                # 新版 Ollama(0.11+)不再把思维链拼进 content,而是放在独立的
+                # reasoning 字段。这里统一包装成 <think> 片段再交给上层拆分,
+                # 这样「思考过程」能在推理阶段就实时透出,而不是等推理结束才见正文。
+                reasoning = getattr(delta, "reasoning", None) or ""
+                if return_raw:
+                    # 原样透出(可能含 <think> 思维链标签),由调用方负责拆分 thinking/正文
+                    if reasoning:
+                        yield f"<think>{reasoning}</think>"
+                    if content:
+                        emitted_any = True
+                        yield content
+                else:
+                    out = _strip_think_stream(content, think_state)
+                    if out:
+                        emitted_any = True
+                        yield out
 
             # 若整段都在思维链中（无正文），给出一个兜底提示
             if not emitted_any:

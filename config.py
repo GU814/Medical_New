@@ -54,7 +54,47 @@ REPORT_MODEL_NAME = os.environ.get("REPORT_MODEL_NAME", MODEL_NAME)
 # 问诊/问答的单次回复 token 上限。
 # 注意：deepseek-r1 等「推理模型」会先把额度消耗在思维链上，只有思维链结束后才输出正文。
 # 额度过小（如 1200）时会出现「整段只有思考、正文为空」的情况，因此给足预算。
-CONSULT_MAX_TOKENS = int(os.environ.get("CONSULT_MAX_TOKENS", "4096"))
+CONSULT_MAX_TOKENS = int(os.environ.get("CONSULT_MAX_TOKENS", "2048"))
+
+# ==================== 响应速度优化（简洁输出）====================
+# 本地实测：deepseek-r1:8b 在本机约 16 tokens/s，耗时几乎完全由「输出 token 数」决定
+# （推理内容 + 正文都在 max_tokens 预算内）。因此缩短输出是最直接的加速手段。
+# 追加到系统提示词的简洁性约束；置空字符串可关闭。注意措辞必须强调「末尾 JSON 块照常输出」，
+# 否则模型会为了省字而省略结构化数据，导致阶段无法推进。
+CONSULT_BRIEF_OUTPUT = os.environ.get("CONSULT_BRIEF_OUTPUT", "true").strip().lower() in ("1", "true", "yes", "on")
+
+CONSULT_BRIEF_HINT = os.environ.get(
+    "CONSULT_BRIEF_HINT",
+    "【响应速度要求】先用最简短的方式想清楚(思考过程不要超过 100 字),"
+    "然后直接给出回复。正文控制在 120 字以内,一次只问最关键的 1 个问题,"
+    "不要罗列条目、不要重复已确认的信息。"
+    "注意:正文之后末尾的 JSON 块必须照常完整输出。",
+)
+
+DIRECT_QA_BRIEF_HINT = os.environ.get(
+    "DIRECT_QA_BRIEF_HINT",
+    "【响应速度要求】请直接给出结论与最关键的 1-3 条建议,控制在 200 字以内,"
+    "不要展开罗列、不要复述问题。分析过程请尽量简短。",
+)
+
+# 简洁性约束会把「末尾必须输出 JSON 块」这条要求挤到提示词中间,模型随即开始漏输出 JSON
+# (实测:JSON 要求在前时命中率 0/9,压在最末尾时 9/9)。故追加简洁约束后必须再补一句提醒,
+# 保证结构化数据不丢 —— 否则问诊阶段永远无法推进、报告也生成不了。
+CONSULT_JSON_REMINDER = os.environ.get(
+    "CONSULT_JSON_REMINDER",
+    "【重要-必须遵守】上述简洁要求不影响结构化输出:正文之后,仍必须在回复的最末尾\n"
+    "附上 JSON 块(含 patient_name/patient_gender/patient_age/chief_complaint/present_illness/\n"
+    "past_history/personal_history/family_history/system_review/stage_complete/next_stage 字段)。\n"
+    "只提取对话中明确提到的信息,JSON 块不得省略。",
+)
+
+# ==================== 阶段推进兜底 ====================
+# 问诊状态机原完全依赖模型返回的 stage_complete。实测某些轮次模型会完全不输出
+# JSON 块(或未收齐信息也持续 false),状态机随即永久卡在 stage 1 —— 问诊永远出
+# 不了报告、"记录"页永远为空。开启后由确定性规则兜底推进(见 consultation
+# .ConsultationSession._fallback_stage_advance)。置 false 可退回纯 LLM 判定。
+ENABLE_STAGE_GUARD = os.environ.get(
+    "ENABLE_STAGE_GUARD", "true").strip().lower() in ("1", "true", "yes", "on")
 
 # ==================== 输出与交互开关 ====================
 # 流式输出：true 时 /chat 走 SSE 逐段返回，体验更友好；false 时回退到一次性 JSON。
@@ -63,6 +103,12 @@ STREAMING_OUTPUT = os.environ.get("STREAMING_OUTPUT", "true").strip().lower() in
 # 直接问答路由：true 时启用轻量意图识别，对「用药/疾病咨询」类问题直接回答，
 # 不再机械套用 5 阶段采集流程；false 时维持原 5 阶段行为。
 ENABLE_DIRECT_QA = os.environ.get("ENABLE_DIRECT_QA", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# 思维链(思考过程)透出：true 时向后端实时转发推理模型的「思考过程」(thinking 事件),
+# 前端以可折叠的「💭 思考过程」块展示,降低长思维链带来的"空等"感并提升可解释性。
+# 仅当使用推理模型(如 deepseek-r1)时才有内容;使用非推理指令模型或关闭时静默(无 thinking 事件)。
+# 关闭可进一步缩短首字前的等待,但会失去可解释性。
+SHOW_THINKING = os.environ.get("SHOW_THINKING", "true").strip().lower() in ("1", "true", "yes", "on")
 
 # ==================== 数据库配置 ====================
 DB_PATH = os.environ.get("DB_PATH", os.path.join(_app_dir, "data", "medical.db"))
@@ -94,13 +140,28 @@ MEMORY_MIN_LEN = int(os.environ.get("MEMORY_MIN_LEN", "8"))
 # 本地 Ollama 需先 `ollama pull whisper`;OpenAI 则直接用 whisper-1。
 # 默认关闭,避免在未配置语音模型时影响现有问诊流程。
 ASR_ENABLED = os.environ.get("ASR_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+# 语音后端:ollama(OpenAI 兼容,需 Ollama 提供 whisper 模型) |
+#           openai(OpenAI 云 whisper-1) | local(进程内 faster-whisper,完全离线)
+# 注意:Ollama 官方库已下架 whisper 模型,本地离线方案请设 ASR_BACKEND=local
+ASR_BACKEND = os.environ.get("ASR_BACKEND", "ollama").strip().lower()
 ASR_MODEL = os.environ.get("ASR_MODEL", "whisper")
+# local 后端专用:faster-whisper 模型尺寸 / 设备 / 精度
+ASR_MODEL_SIZE = os.environ.get("ASR_MODEL_SIZE", "base")
+ASR_DEVICE = os.environ.get("ASR_DEVICE", "cpu")
+ASR_COMPUTE_TYPE = os.environ.get("ASR_COMPUTE_TYPE", "int8")
 ASR_API_BASE_URL = os.environ.get("ASR_API_BASE_URL", API_BASE_URL)
 ASR_API_KEY = os.environ.get("ASR_API_KEY", API_KEY)
 ASR_MAX_SIZE_MB = int(os.environ.get("ASR_MAX_SIZE_MB", "10"))
 ASR_SUPPORTED_FORMATS = tuple(
     o.strip().lower() for o in os.environ.get("ASR_SUPPORTED_FORMATS", "mp3,wav,m4a,amr,pcm").split(",") if o.strip()
 )
+# local 后端:预先下载到本地的权重目录(绝对路径)。设置后完全离线从本地目录加载,
+# 不走 HuggingFace Hub,避免国内网络拉取权重失败。留空则兜底走 HF 镜像按需下载。
+ASR_LOCAL_MODEL_DIR = os.environ.get("ASR_LOCAL_MODEL_DIR", "").strip()
+# local 后端:识别语言。留空=自动检测;医疗问诊场景建议固定 zh(更快且避免误判为英语/日语)
+ASR_LANGUAGE = os.environ.get("ASR_LANGUAGE", "zh").strip()
+# local 后端:初始提示词(给解码器一点领域先验,能提升医学术语准确率),留空则不使用
+ASR_INITIAL_PROMPT = os.environ.get("ASR_INITIAL_PROMPT", "以下是一段中文医疗问诊对话。").strip()
 
 # 图片识别(Vision):基于 OpenAI 兼容多模态 chat(消息内含 image_url)。
 # 需多模态模型:本地 Ollama 可 `ollama pull llava` 或 `qwen2.5vl`;OpenAI 用 gpt-4o-mini 等。
@@ -128,6 +189,13 @@ SERVER_PORT = int(os.environ.get("SERVER_PORT", "8000"))
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "300"))
 
 LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
+
+# ==================== 后台报告生成配置 ====================
+# 报告改为 asyncio.create_task 后台生成(不随 SSE 断开而中断)。
+# REPORT_GEN_TIMEOUT: 单次尝试的整体超时(asyncio.wait_for,秒)。
+# REPORT_MAX_ATTEMPTS: 最大尝试次数(失败自动重试 1 次)。
+REPORT_GEN_TIMEOUT = int(os.environ.get("REPORT_GEN_TIMEOUT", "300"))
+REPORT_MAX_ATTEMPTS = int(os.environ.get("REPORT_MAX_ATTEMPTS", "2"))
 
 # ==================== 安全与认证配置 ====================
 # JWT 签名密钥(必填,启动时校验非空;生产务必通过环境变量注入)

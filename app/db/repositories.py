@@ -120,6 +120,36 @@ def get_latest_session(user_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def get_latest_any_session(user_id: int) -> Optional[dict]:
+    """
+    获取用户「最近一条」会话(不论是否已完成)。
+
+    用于进入问诊页时复用已有会话,而不是因为「上一条已完成」就新建一个空会话,
+    导致用户看不到历史消息。
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM consultation_sessions WHERE user_id=? "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def list_sessions(user_id: int, limit: int = 20) -> list:
+    """会话列表(最近更新优先),不含明细,供前端做历史会话切换。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT session_id, stage, is_complete, chief_complaint, "
+            "conversation_history, created_at, updated_at "
+            "FROM consultation_sessions WHERE user_id=? "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (user_id, max(1, min(int(limit or 20), 100))),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 def delete_session(session_id: str, user_id: int):
     with get_conn() as conn:
         conn.execute(

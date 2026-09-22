@@ -12,3 +12,7 @@ reportlab==4.2.0
 itsdangerous==2.2.0
 # ====== 阶段三(P2) ======
 python-multipart==0.0.9
+# ====== 语音识别(ASR_BACKEND=local)=========
+# 进程内离线转写,替代已下架的 Ollama whisper 模型
+faster-whisper==1.2.1
+av==18.1.0

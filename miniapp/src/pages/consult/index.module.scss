@@ -14,6 +14,10 @@
 
 .scrollArea {
   flex: 1;
+}
+
+// scroll-view 在 webview 模式下不支持 padding,改用内层 View 承载内边距
+.scrollInner {
   padding: $spacing-md $spacing-lg;
   box-sizing: border-box;
 }
@@ -113,6 +117,19 @@
   position: absolute;
   top: 16rpx;
   right: 24rpx;
+  z-index: 10;
+  font-size: $font-size-xs;
+  color: $color-primary;
+  background: rgba(22, 93, 255, 0.08);
+  padding: $spacing-xs $spacing-sm;
+  border-radius: $radius-round;
+}
+
+// 历史会话入口:与「新建对话」同规格,位于其左侧
+.historyBtn {
+  position: absolute;
+  top: 16rpx;
+  right: 200rpx;
   z-index: 10;
   font-size: $font-size-xs;
   color: $color-primary;

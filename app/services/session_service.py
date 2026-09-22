@@ -94,6 +94,51 @@ def get_latest_unfinished(user_id: int, session_cls):
     return _row_to_session(row, user_id, session_cls)
 
 
+def get_latest_any(user_id: int, session_cls):
+    """
+    获取用户最近一条会话(不论是否完成)。
+    进入问诊页时用它复用已有会话,避免"上一条已完成 -> 新建空会话 -> 历史看似丢失"。
+    """
+    row = repositories.get_latest_any_session(user_id)
+    if not row:
+        return None
+    return _row_to_session(row, user_id, session_cls)
+
+
+def list_sessions(user_id: int, limit: int = 20) -> list:
+    """
+    会话列表(供历史会话切换)。返回轻量摘要,解密 conversation_history 取出首条
+    用户消息作为标题预览;单条解密失败不影响其余条目。
+    """
+    rows = repositories.list_sessions(user_id, limit=limit)
+    items = []
+    for row in rows:
+        title = ""
+        msg_count = 0
+        try:
+            dec = crypto.decrypt_record(user_id, row, crypto.SESSION_SENSITIVE_FIELDS)
+            history_raw = dec.get("conversation_history") or ""
+            history = json.loads(history_raw) if history_raw else []
+        except Exception:
+            history = []
+        if isinstance(history, list):
+            msg_count = len(history)
+            for m in history:
+                if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
+                    title = str(m["content"]).strip().replace("\n", " ")
+                    break
+        items.append({
+            "session_id": row.get("session_id"),
+            "stage": row.get("stage"),
+            "is_complete": bool(row.get("is_complete")),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "message_count": msg_count,
+            "title": title[:40] if title else "",
+        })
+    return items
+
+
 def _row_to_session(row: dict, user_id: int, session_cls):
     """DB 行(含密文)解密后还原为 ConsultationSession"""
     dec = crypto.decrypt_record(user_id, row, crypto.SESSION_SENSITIVE_FIELDS)
@@ -119,14 +164,27 @@ def reset_session(session_id: str, user_id: int, session_cls):
 
 
 def get_history(session_id: str, user_id: int, cursor: int = 0, size: int = 20):
-    """分页获取对话历史"""
+    """
+    分页获取对话历史。
+
+    注意:conversation_history 在落库时是密文(见 persist -> crypto.encrypt_record),
+    这里必须先按用户密钥解密再 json.loads。之前直接对密文 json.loads 必然抛
+    JSONDecodeError,被下面的 except 吞掉后返回空列表 —— 表现为"历史记录查不出来"。
+    """
     row = repositories.get_session(session_id, user_id)
     if not row:
         return {"items": [], "next_cursor": None}
-    history = row.get("conversation_history")
     try:
-        history = json.loads(history) if history else []
+        dec = crypto.decrypt_record(user_id, row, crypto.SESSION_SENSITIVE_FIELDS)
+        raw = dec.get("conversation_history") or ""
+    except Exception:
+        logger.warning("会话历史解密失败,回退为原始字段 session_id=%s", session_id)
+        raw = row.get("conversation_history") or ""
+    try:
+        history = json.loads(raw) if raw else []
     except (json.JSONDecodeError, TypeError):
+        history = []
+    if not isinstance(history, list):
         history = []
     total = len(history)
     end = min(cursor + size, total)
