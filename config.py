@@ -110,6 +110,57 @@ ENABLE_DIRECT_QA = os.environ.get("ENABLE_DIRECT_QA", "true").strip().lower() in
 # 关闭可进一步缩短首字前的等待,但会失去可解释性。
 SHOW_THINKING = os.environ.get("SHOW_THINKING", "true").strip().lower() in ("1", "true", "yes", "on")
 
+# ==================== ReAct 推理过程(可解释性)配置 ====================
+# 在「直接问答」分支启用 ReAct 受控循环:Thought/Action 由 Planner 产出,
+# Observation 只来自工具真实返回值(不由模型编造),并把完整推理步骤下发给前端。
+# Planner 与终答均复用 CONSULT_MODEL_NAME(不引入新模型标识)。
+ENABLE_REACT = os.environ.get("ENABLE_REACT", "false").strip().lower() in ("1", "true", "yes", "on")
+
+# Planner 最大步数(含第 0 步确定性步骤):超过即强制进入终答
+REACT_MAX_STEPS = int(os.environ.get("REACT_MAX_STEPS", "3"))
+
+# 单轮推理编排预算(毫秒)。作用于「Planner 循环 + 工具调用」阶段,
+# 超限立即进入终答(终答全程流式,不再受此预算约束)。
+REACT_BUDGET_MS = int(os.environ.get("REACT_BUDGET_MS", "8000"))
+
+# 单个工具调用超时(毫秒),超时按空观察处理并降级,不中断整轮
+REACT_TOOL_TIMEOUT_MS = int(os.environ.get("REACT_TOOL_TIMEOUT_MS", "4000"))
+
+# 是否向前端下发 step 事件(false 时仅落库供追溯)
+REACT_SHOW_STEPS = os.environ.get("REACT_SHOW_STEPS", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# 是否把推理步骤落库到 session_steps 表
+REACT_PERSIST = os.environ.get("REACT_PERSIST", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# 终答句子级溯源:解析正文每句携带的 [n] 引用编号,回校验后绑定到知识片段
+REACT_SENTENCE_CITATION = os.environ.get("REACT_SENTENCE_CITATION", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# 引用编号回校验:剥离正文里未定义的 [n](防止小模型乱标)
+REACT_CITATION_CHECK = os.environ.get("REACT_CITATION_CHECK", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# ==================== 防幻觉:证据门槛与零命中兜底 ====================
+# kb_search 片段的相关度下限(0~1,score = 1 - cosine_distance)。
+# 低于该值的片段不进引用池、不作为作答依据 —— 避免「沾边段落」被当成医学证据。
+REACT_MIN_SCORE = float(os.environ.get("REACT_MIN_SCORE", "0.50"))
+
+# 零命中(经 REACT_MIN_SCORE 过滤后无任何可引用片段)时的确定作答语。
+# 语义是「不推测、不编造」,直接把就医建议给用户。
+REACT_NO_EVIDENCE_REPLY = os.environ.get("REACT_NO_EVIDENCE_REPLY", "知识库未覆盖，建议就医。")
+
+# True(默认):零命中时直接以上述话术作答,跳过终答 LLM —— 结果 100% 可预期,
+#   也省掉一次几十秒的无效生成(没有任何依据时,生成得越好越危险)。
+# False:仍生成,但会用后置校验强制话术,未命中则整段替换(保留回滚空间)。
+REACT_NO_EVIDENCE_STRICT = os.environ.get(
+    "REACT_NO_EVIDENCE_STRICT", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# 话题明显超出健康科普范围时的二级兜底引导(C 期)。
+REACT_OUT_OF_SCOPE_REPLY = os.environ.get(
+    "REACT_OUT_OF_SCOPE_REPLY",
+    "本助手的知识库目前只覆盖用药、症状、疾病与日常护理等健康科普内容，"
+    "这个问题超出了我的覆盖范围。建议直接描述你的具体健康问题（如症状、用药、护理），"
+    "或及时就医询问。",
+)
+
 # ==================== 数据库配置 ====================
 DB_PATH = os.environ.get("DB_PATH", os.path.join(_app_dir, "data", "medical.db"))
 
@@ -121,6 +172,25 @@ KNOWLEDGE_DIR = os.environ.get("KNOWLEDGE_DIR", os.path.join(_app_dir, "data", "
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "500"))
 
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "100"))
+
+# 分块策略。"heading"(默认):按 Markdown 的 ## 标题层级切分,一个块 = 一个 ## 主题
+#   (标题行 + 其下直到下一个 ## 之前的全部内容,含 ### 子标题、正文与代码块);
+#   第一个 ## 之前的 # 级标题与引言单独成块。
+#   "legacy":回退到旧的「标题优先 + 贪心装箱到 CHUNK_SIZE」行为。
+# 实测本库 11 篇文档按 ## 切分后最大块 1337 字,主题纯度显著高于装箱方案
+#   (旧方案 114/117 块跨多个标题)。
+CHUNK_STRATEGY = os.environ.get("CHUNK_STRATEGY", "heading").strip().lower()
+
+# 单个 ## 块超过该长度时才二次切分(先在 ### 处断开,再按字符+重叠兜底)。
+# 设得足够大,是为了让「一个 ## 主题 = 一个块」成为常态,二次切分只作安全阀。
+CHUNK_H2_MAX_SIZE = int(os.environ.get("CHUNK_H2_MAX_SIZE", "2000"))
+
+# 低于该长度的块不写入向量库(切分时仍会产出,只是不参与检索)。
+# 起因:按 ## 切分后,12 个文档的引言块只剩一行 H1 标题(11~16 字)。这类块
+#   没有任何可用信息,但短文本的余弦相似度会虚高 —— 实测一个 14 字的标题行
+#   对「发烧能不能吃对乙酰氨基酚」拿到 0.77 分,把真正含药名的片段挤出 Top-K。
+# 本库内容块最短 76 字,取 40 可安全分离。置 0 可关闭该过滤。
+CHUNK_MIN_INDEX_LEN = int(os.environ.get("CHUNK_MIN_INDEX_LEN", "40"))
 
 SEARCH_TOP_K = int(os.environ.get("SEARCH_TOP_K", "5"))
 
@@ -134,6 +204,34 @@ MEMORY_TOP_K = int(os.environ.get("MEMORY_TOP_K", "3"))
 
 # 写入记忆的最小片段长度(过短的"是/否"类答复不写入,降低噪声)
 MEMORY_MIN_LEN = int(os.environ.get("MEMORY_MIN_LEN", "8"))
+
+# ==================== 问诊上下文与字段提取 ====================
+# 注入 LLM 的历史消息条数(user+assistant 各算 1 条,12 条 ≈ 最近 6 轮)。
+# 原实现四处硬编码 [-6:](≈3 轮):早期轮次提供的背景信息(用药过敏史、既往就诊等)
+# 若当时没被 LLM 提取进结构化字段,3 轮后就从模型视野里彻底消失 ——
+# 表现为「答非所问 / 重复问已问过的问题」。长期记忆又刻意排除当前会话
+# (见 consultation._retrieve_memory 的 exclude_session_id),没有其他通道能把它找回来。
+# 故把窗口放宽到 6 轮;本地 7b 模型 32k 上下文,这点增量对首字延迟影响可忽略。
+CONSULT_HISTORY_TURNS = int(os.environ.get("CONSULT_HISTORY_TURNS", "12"))
+
+# 自由文本字段(现病史/既往史/个人史/家族史/系统回顾)采用累积合并而非覆盖。
+# 关闭则退回旧的「每轮整体覆盖」行为(实测会让前几轮采集的细节被更短的新值顶掉)。
+CONSULT_FIELDS_MERGE = os.environ.get("CONSULT_FIELDS_MERGE", "true").strip().lower() in (
+    "1", "true", "yes", "on")
+
+# 单个自由文本字段合并后的最大长度(超出则保留尾部新内容,避免越攒越长拖慢生成)
+CONSULT_FIELD_MAX_LEN = int(os.environ.get("CONSULT_FIELD_MAX_LEN", "600"))
+
+# 在用户消息附近复述一份极简的「已收集项,禁止重复询问」提示。
+# 上下文里完整的"已收集"清单在最前面,7b 模型对长提示开头的指令遵循度偏低,
+# 光靠它压不住重复提问,故再贴一份紧凑版在靠近生成起点的位置(成本仅几十字)。
+CONSULT_NO_REPEAT_HINT = os.environ.get("CONSULT_NO_REPEAT_HINT", "true").strip().lower() in (
+    "1", "true", "yes", "on")
+
+# 确定性兜底提取:LLM 未输出 JSON / 字段为空时,用规则从用户原话里补抽年龄与性别。
+# 这是「字段校验仅判空」的补丁 —— 没有它,模型漏输出 JSON 的那一轮信息就永久丢失。
+CONSULT_REGEX_FALLBACK = os.environ.get("CONSULT_REGEX_FALLBACK", "true").strip().lower() in (
+    "1", "true", "yes", "on")
 
 # ==================== 多模态输入(语音/图片识别)配置 ====================
 # 语音识别(ASR):基于 OpenAI 兼容的 /v1/audio/transcriptions 接口。

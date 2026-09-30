@@ -95,6 +95,23 @@ async def get_session_history(
     return result
 
 
+@router.get("/sessions/{session_id}/steps")
+async def get_session_steps(
+    session_id: str,
+    turn_index: int = None,
+    user_id: int = Depends(get_current_user),
+):
+    """
+    获取会话的推理过程(供历史回放)。
+
+    - turn_index 省略时返回该会话所有轮次;
+    - 无记录时返回 missing_reason 说明原因(前端据此展示提示,不显示空文案)。
+
+    步骤数据含患者原话与命中片段,已在 service 层列级加密。
+    """
+    return session_service.get_session_steps(session_id, user_id, turn_index)
+
+
 @router.get("/sessions/{session_id}/report")
 async def get_session_report(session_id: str, user_id: int = Depends(get_current_user)):
     """

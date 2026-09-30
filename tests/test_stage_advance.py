@@ -25,7 +25,15 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import consultation  # noqa: E402
+import llm_client  # noqa: E402
+import report_generator  # noqa: E402
 from consultation import ConsultationSession  # noqa: E402
+
+# 本模块靠「导入即执行」驱动问诊流程,里面用了模块级替换(consultation.llm_client.chat_stream
+# 等)且不是 pytest monkeypatch,无法自动回滚。若不在这里预留原件,被 pytest 后续收集的测试
+# 模块会拿到被替换后的实现 —— 实测会误伤 test_report_visit_date 的流式就诊日期用例。
+_ORIG_GENERATE_REPORT_STREAM = report_generator.generate_report_stream
+_ORIG_CHAT_STREAM = llm_client.chat_stream
 
 PASS, FAIL = 0, 0
 
@@ -192,11 +200,23 @@ async def fake_report_stream(*args, **kwargs):
 
 consultation.report_generator.generate_report_stream = fake_report_stream
 
+
+async def qa_final_stream(*args, **kwargs):
+    # 收尾轮:模型不再提问(原用例回复带问号,在「提问必须等回答」规则下应被拦截,
+    # 正是 2026-09-26 修复的「第五步提问后报告提前生成」的旧断言)
+    yield "好的，您的症状与病史我已经充分了解，信息收集完成。"
+
+
+consultation.llm_client.chat_stream = qa_final_stream
+
 _done_sess = ConsultationSession(session_id="t-done")
 _done_sess.stage = 4  # 系统回顾阶段
-_done_sess.system_review = "无特殊异常"  # 数据 ready: 1 轮即可推进
 _done_sess._stage_turns = 0
-_done_sess.patient_name = "小明"
+# 数据齐备(满足 _can_finalize):用户已回答完最后一问,本轮模型只做收尾陈述
+_done_sess.patient_name, _done_sess.patient_gender = "小明", "男"
+_done_sess.patient_age, _done_sess.chief_complaint = 18, "头疼"
+_done_sess.present_illness = "头疼三天，阵发性加重"
+_done_sess.system_review = "无特殊异常"
 
 
 async def drain_done():
@@ -242,8 +262,88 @@ check("已完成无报告 -> pending(可重触发)", _old_complete.report_status
 _old_new = ConsultationSession.from_dict({"report": "", "is_complete": False})
 check("未完成 -> none", _old_new.report_status, "none")
 
+# --- 12. 第五步:模型提问未获回答时,报告不得提前生成（2026-09-26 修复）-----
+# 场景复现:问句在句中、句号结尾(「……是否有其他症状？这些信息有助于我们进行系统回顾。」),
+# 旧实现只判末尾字符 → 漏判 → stage 直跳 5,报告在患者作答前开跑。
+print("\n[12] 问句在句中(句号结尾)时拦截过早完结")
+import json as _mj
+
+_midq_payload = {
+    "patient_name": "周敏", "patient_gender": "女", "patient_age": 28,
+    "chief_complaint": "上腹隐痛", "present_illness": "上腹隐痛三天，餐后加重",
+    "past_history": "", "personal_history": "", "family_history": "家族中无遗传病",
+    "system_review": "暂无特殊",
+    "stage_complete": True, "next_stage": 5,
+}
+_midq_reply = (
+    "您提到家族中没有遗传病。请问您是否有其他系统的症状，比如消化系统不适、"
+    "呼吸困难或肌肉疼痛？这些信息有助于我们进行系统回顾。\n\n【JSON块】\n"
+    + _mj.dumps(_midq_payload, ensure_ascii=False)
+)
+
+
+async def midq_stream(*args, **kwargs):
+    yield _midq_reply
+
+
+consultation.llm_client.chat_stream = midq_stream
+_midq_sess = ConsultationSession(session_id="t-midq")
+_midq_sess.stage = 4
+_midq_sess.patient_name, _midq_sess.patient_gender = "周敏", "女"
+_midq_sess.patient_age, _midq_sess.chief_complaint = 28, "上腹隐痛"
+_midq_sess.present_illness = "上腹隐痛三天，餐后加重"
+_midq_sess.system_review = "暂无特殊"
+
+
+async def drain_midq():
+    _end = None
+    async for _ev in _midq_sess.process_user_input_stream("没有遗传病"):
+        if _ev.get("event") == "end":
+            _end = _ev
+    return _end
+
+
+_end_midq = asyncio.run(drain_midq())
+check("问句未答 stage 保持 4", _midq_sess.stage, 4)
+check("is_complete 仍为 False", _midq_sess.is_complete, False)
+check("报告未启动", _midq_sess.report_status, "none")
+check("未追加完成提示语", "✅ 问诊信息收集完成" in _end_midq["data"], False)
+
+# --- 13. 同样数据、回复无问句(用户已作答) → 正常进入报告 ------------------
+print("\n[13] 无问句时正常完结并触发报告")
+
+
+async def fin_stream(*args, **kwargs):
+    yield "好的，信息已经收集完整。\n\n【JSON块】\n" + _mj.dumps(_midq_payload, ensure_ascii=False)
+
+
+consultation.llm_client.chat_stream = fin_stream
+_fin_sess = ConsultationSession(session_id="t-fin")
+_fin_sess.stage = 4
+_fin_sess.patient_name, _fin_sess.patient_gender = "周敏", "女"
+_fin_sess.patient_age, _fin_sess.chief_complaint = 28, "上腹隐痛"
+_fin_sess.present_illness = "上腹隐痛三天，餐后加重"
+_fin_sess.system_review = "暂无特殊"
+
+
+async def drain_fin():
+    async for _ev in _fin_sess.process_user_input_stream("没有其他症状了"):
+        pass
+    if _fin_sess._report_task is not None:
+        await _fin_sess._report_task
+
+
+asyncio.run(drain_fin())
+check("stage 推进到 5", _fin_sess.stage, 5)
+check("is_complete 置真", _fin_sess.is_complete, True)
+check("报告生成完成", _fin_sess.report_status, "done")
+
 print("\n" + "=" * 56)
 print(f"结果: {PASS} passed, {FAIL} failed")
+
+# --- 还原全局替换,避免污染同进程内后续被收集的测试模块 ---
+consultation.report_generator.generate_report_stream = _ORIG_GENERATE_REPORT_STREAM
+llm_client.chat_stream = _ORIG_CHAT_STREAM
 
 # 用 pytest 收集时不退出，避免 SystemExit 打断整个测试会话
 if __name__ == "__main__":

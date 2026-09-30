@@ -1,5 +1,11 @@
 import { request } from './api';
-import type { SessionBrief, RecordListItem, RecordDetail, PagedResult } from '@/types';
+import type {
+  SessionBrief,
+  RecordListItem,
+  RecordDetail,
+  PagedResult,
+  SessionStepsResult,
+} from '@/types';
 
 // ==================== 问诊会话 ====================
 export function createSession() {
@@ -43,6 +49,21 @@ export function resetSession(sessionId: string) {
   return request<SessionBrief>({
     url: `/api/sessions/${sessionId}/reset`,
     method: 'POST',
+  })
+}
+
+/**
+ * 获取会话的推理过程(历史回放用)。
+ *
+ * 关键约定:会话一条步骤都没有时,后端也会返回 missing_reason 说明「为什么没有」
+ * (未开启推理过程 / 该会话早于本功能上线 / 指定轮次无记录)。
+ * 前端必须把 missing_reason 原样展示给用户,不允许退化成「暂无推理过程」这类空态文案。
+ */
+export function getSessionSteps(sessionId: string, turnIndex?: number) {
+  const qs = turnIndex === undefined ? '' : `?turn_index=${turnIndex}`
+  return request<SessionStepsResult>({
+    url: `/api/sessions/${sessionId}/steps${qs}`,
+    quietStatuses: [404],
   })
 }
 

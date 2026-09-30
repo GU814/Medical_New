@@ -56,11 +56,15 @@ def get_profile(user_id: int) -> dict:
         "nickname": user.get("nickname"),
         "avatar_url": user.get("avatar_url"),
         "phone_masked": mask_phone(phone_plain) if phone_plain else None,
+        # 登录资料(供前端回显;新会话由 session_service 预填使用)
+        "age": user.get("profile_age"),
+        "gender": user.get("profile_gender"),
         "created_at": user.get("created_at"),
     }
 
 
-def update_profile(user_id: int, nickname: str = None, avatar_url: str = None, phone: str = None):
+def update_profile(user_id: int, nickname: str = None, avatar_url: str = None,
+                   phone: str = None, age: int = None, gender: str = None):
     """更新资料;phone 加密后存储"""
     phone_enc = crypto.encrypt_field(user_id, phone) if phone else None
     # phone_enc 为 None 时不更新(保留原值);为空串表示清空
@@ -69,4 +73,6 @@ def update_profile(user_id: int, nickname: str = None, avatar_url: str = None, p
         nickname=nickname,
         avatar_url=avatar_url,
         phone=phone_enc if phone is not None else None,
+        age=age,
+        gender=gender,
     )

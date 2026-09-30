@@ -265,6 +265,9 @@ PATIENT_SENSITIVE_FIELDS = (
 )
 SESSION_SENSITIVE_FIELDS = PATIENT_SENSITIVE_FIELDS + ("conversation_history", "report")
 
+# 推理步骤表(session_steps)的敏感列:含患者原话、命中的病史片段与引用摘录
+STEP_SENSITIVE_FIELDS = ("args", "text", "refs", "sentences")
+
 
 def encrypt_record(user_id: int, record: dict, fields) -> dict:
     """批量加密记录中指定字段,返回新 dict(不修改原对象)"""

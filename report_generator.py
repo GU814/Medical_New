@@ -5,6 +5,8 @@
 
 import asyncio
 import logging
+import re
+from datetime import datetime
 from typing import Optional
 
 import database
@@ -13,6 +15,44 @@ import llm_client
 import config
 
 logger = logging.getLogger(__name__)
+
+# ==================== 时间处理 ====================
+# 统一时间格式；报告/落库/历史记录共用，避免各处格式不一致
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def current_time_str() -> str:
+    """
+    取系统当前时间（本机本地时区）并统一格式化。
+    关键：报告中的日期必须由本函数产出，绝不允许模型自行编造。
+    """
+    return datetime.now().strftime(TIME_FORMAT)
+
+
+# 匹配报告正文里的"就诊日期："一行（值部分只取到行尾）
+_VISIT_DATE_RE = re.compile(r"(就诊日期\s*[：:]\s*)([^\n\r]+)")
+
+
+def _enforce_visit_date(report: str, visit_date: str) -> str:
+    """
+    兜底校正：把报告中的就诊日期强制替换为系统时间。
+    - 模型写了日期（可能是训练语料里的 2023 等旧值）→ 整行替换
+    - 模型没写日期 → 在"## 基本信息"段下补一行
+    """
+    if not report:
+        return report
+
+    if _VISIT_DATE_RE.search(report):
+        return _VISIT_DATE_RE.sub(
+            lambda m: m.group(1) + visit_date, report, count=1
+        )
+
+    # 模型省略了该字段：插到"## 基本信息"标题之后
+    insert = f"- 就诊日期：{visit_date}\n"
+    new_report, n = re.subn(
+        r"(##\s*基本信息\s*\n)", lambda m: m.group(1) + insert, report, count=1
+    )
+    return new_report if n else report
 
 # ==================== 报告生成提示词 ====================
 
@@ -95,7 +135,7 @@ REPORT_GENERATION_PROMPT = """你是一位专业的医学文书写作者。请�
 - 姓名：
 - 性别：
 - 年龄：
-- 就诊日期：
+- 就诊日期：{visit_date}
 
 ## 主诉
 
@@ -142,6 +182,8 @@ REPORT_GENERATION_PROMPT = """你是一位专业的医学文书写作者。请�
 3. 如果某个板块没有对应信息，直接省略该板块，不要留空标题
 4. 报告内容必须基于实际问诊收集的信息，不得编造
 5. 末尾必须附免责声明
+6. 就诊日期已由系统生成为"{visit_date}"，必须原样照抄，
+   严禁自行填写、推算或改用任何其他日期（也不要改成"xxxx年xx月xx日"的中文写法）
 """
 
 
@@ -219,6 +261,8 @@ async def generate_report_stream(patient_data: dict, user_id: int = 0):
     )
 
     # 3. 流式生成完整报告
+    # 就诊日期在提示词里由系统给定，不允许模型编造
+    visit_date = current_time_str()
     prompt = REPORT_GENERATION_PROMPT.format(
         patient_name=patient_data.get("patient_name", "未知"),
         patient_gender=patient_data.get("patient_gender", "未知"),
@@ -231,6 +275,7 @@ async def generate_report_stream(patient_data: dict, user_id: int = 0):
         system_review=patient_data.get("system_review", "未提供"),
         deep_analysis=deep_analysis,
         history_reference=history_reference,
+        visit_date=visit_date,
     )
 
     disclaimer = """
@@ -248,17 +293,49 @@ async def generate_report_stream(patient_data: dict, user_id: int = 0):
 **请务必咨询专业医疗人员以获得准确诊断和治疗方案。**"""
 
     full = []
+    pending = ""
+    fixed = False
+    # 等待"就诊日期"出现时最多缓冲的字符数，超过则不再等待、直接放行
+    pending_limit = 600
+
     async for chunk in llm_client.chat_stream(
-        system_prompt="你是一位专业的医学文书写作者。请严格按照大病历格式生成报告，问过什么写什么，没问过不写，禁止写占位文字。",
+        system_prompt="你是一位专业的医学文书写作者。请严格按照大病历格式生成报告，问过什么写什么，没问过不写，禁止写占位文字。就诊日期必须使用提示中给出的系统时间，不得编造。",
         user_prompt=prompt,
         temperature=0.5,
         model=config.REPORT_MODEL_NAME,
         max_tokens=config.MAX_TOKENS,
     ):
         full.append(chunk)
-        yield chunk
+        if fixed:
+            yield chunk
+            continue
 
-    report = "".join(full)
+        pending += chunk
+
+        # 必须等到"就诊日期"这一行完整（出现换行）再替换，
+        # 否则分块只收到半行（如"就诊日期：2"）就替换，后续块会继续拼接成"2026-09-27 18:51:1323年10月1日"
+        m = _VISIT_DATE_RE.search(pending)
+        line_end = -1
+        if m:
+            line_end = pending.find("\n", m.end())
+
+        if line_end != -1:
+            fixed = True
+            head, tail = pending[: line_end + 1], pending[line_end + 1 :]
+            yield _enforce_visit_date(head, visit_date)
+            if tail:
+                yield tail
+            pending = ""
+        elif len(pending) >= pending_limit:
+            # 等太久（模型可能没写这一行），原样放行，落库时再兜底
+            fixed = True
+            yield pending
+            pending = ""
+
+    if not fixed and pending:
+        yield _enforce_visit_date(pending, visit_date)
+
+    report = _enforce_visit_date("".join(full), visit_date)
     if "免责声明" not in report:
         report += disclaimer
 
@@ -375,6 +452,8 @@ def _do_deep_analysis(patient_data: dict, knowledge_reference: str, history_refe
 
 def _generate_full_report(patient_data: dict, deep_analysis: str, history_reference: str) -> str:
     """调用 LLM 生成完整的大病历报告"""
+    # 就诊日期由系统给定，模型不得编造（见 _enforce_visit_date 兜底）
+    visit_date = current_time_str()
     prompt = REPORT_GENERATION_PROMPT.format(
         patient_name=patient_data.get("patient_name", "未知"),
         patient_gender=patient_data.get("patient_gender", "未知"),
@@ -387,17 +466,21 @@ def _generate_full_report(patient_data: dict, deep_analysis: str, history_refere
         system_review=patient_data.get("system_review", "未提供"),
         deep_analysis=deep_analysis,
         history_reference=history_reference,
+        visit_date=visit_date,
     )
 
     try:
         report = llm_client.chat(
-            system_prompt="你是一位专业的医学文书写作者。请严格按照大病历格式生成报告，问过什么写什么，没问过不写，禁止写占位文字。",
+            system_prompt="你是一位专业的医学文书写作者。请严格按照大病历格式生成报告，问过什么写什么，没问过不写，禁止写占位文字。就诊日期必须使用提示中给出的系统时间，不得编造。",
             user_prompt=prompt,
             temperature=0.5,
             # 同上：非流式路径也统一用 REPORT_MODEL_NAME，避免回退到推理模型
             model=config.REPORT_MODEL_NAME,
             max_tokens=config.MAX_TOKENS,
         )
+
+        # 兜底：模型若仍写了别的日期，强制改成系统时间
+        report = _enforce_visit_date(report, visit_date)
 
         # 确保报告末尾有免责声明
         disclaimer = """

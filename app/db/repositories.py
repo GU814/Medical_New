@@ -46,7 +46,8 @@ def get_user(user_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def update_user_profile(user_id: int, nickname: str = None, avatar_url: str = None, phone: str = None):
+def update_user_profile(user_id: int, nickname: str = None, avatar_url: str = None,
+                        phone: str = None, age: int = None, gender: str = None):
     """更新用户资料(仅更新非空字段)"""
     fields, params = [], []
     if nickname is not None:
@@ -55,6 +56,10 @@ def update_user_profile(user_id: int, nickname: str = None, avatar_url: str = No
         fields.append("avatar_url=?"); params.append(avatar_url)
     if phone is not None:
         fields.append("phone=?"); params.append(phone)
+    if age is not None:
+        fields.append("profile_age=?"); params.append(int(age))
+    if gender is not None:
+        fields.append("profile_gender=?"); params.append(gender)
     if not fields:
         return
     params.append(user_id)
@@ -94,6 +99,82 @@ def save_session(session_id: str, user_id: int, data: dict):
              1 if data.get("is_complete") else 0, data.get("report"),
              data.get("created_at", now), now),
         )
+        conn.commit()
+
+
+# ==================== session_steps(推理过程 / 知识溯源) ====================
+# 说明:调用方(service 层)负责列级加密,这里只做落库与读取。
+#       user_id / session_id / turn_index / seq 保持明文,便于统计与排序。
+
+def save_session_steps(user_id: int, session_id: str, turn_index: int, steps: list,
+                       branch: str = "", fallback_reason: str = None):
+    """批量写入一轮的推理步骤(幂等:同 session/turn/seq 已存在时先删后插)。
+
+    steps 元素需为 dict,且 text/refs/sentences/args 已由调用方加密。
+    """
+    if not steps:
+        return 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM session_steps WHERE session_id=? AND turn_index=?",
+            (session_id, turn_index),
+        )
+        conn.executemany(
+            """
+            INSERT INTO session_steps(
+                user_id, session_id, turn_index, seq, step_type, status, branch,
+                tool, args_json, text, refs_json, sentences_json,
+                elapsed_ms, ts, fallback_reason, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    user_id, session_id, turn_index,
+                    int(s.get("seq", 0)),
+                    s.get("step_type", ""),
+                    s.get("status"),
+                    branch,
+                    s.get("tool"),
+                    s.get("args"),
+                    s.get("text"),
+                    s.get("refs"),
+                    s.get("sentences"),
+                    int(s.get("elapsed_ms") or 0),
+                    s.get("ts"),
+                    fallback_reason,
+                    now,
+                )
+                for s in steps
+            ],
+        )
+        conn.commit()
+    return len(steps)
+
+
+def get_session_steps(session_id: str, user_id: int, turn_index: int = None) -> list:
+    """读取推理步骤。turn_index 为空时返回该会话全部轮次,按轮次/序号升序。"""
+    with get_conn() as conn:
+        if turn_index is None:
+            cur = conn.execute(
+                "SELECT * FROM session_steps WHERE session_id=? AND user_id=? "
+                "ORDER BY turn_index ASC, seq ASC",
+                (session_id, user_id),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT * FROM session_steps WHERE session_id=? AND user_id=? AND turn_index=? "
+                "ORDER BY seq ASC",
+                (session_id, user_id, turn_index),
+            )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def delete_session_steps(session_id: str, user_id: int):
+    """会话重置时一并清理推理步骤(与 delete_session 对应)。"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM session_steps WHERE session_id=? AND user_id=?",
+                     (session_id, user_id))
         conn.commit()
 
 

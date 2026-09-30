@@ -1,0 +1,238 @@
+@use '@/styles/variables.scss' as *;
+
+.block {
+  margin-bottom: $spacing-sm;
+  padding: $spacing-xs $spacing-md;
+  background: rgba(22, 93, 255, 0.04);
+  border-left: 4rpx solid rgba(22, 93, 255, 0.3);
+  border-radius: $radius-sm;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.icon {
+  font-size: $font-size-sm;
+  margin-right: $spacing-xs;
+}
+
+.title {
+  font-size: $font-size-xs;
+  font-weight: $font-weight-medium;
+  color: $color-text-tertiary;
+}
+
+.meta {
+  flex: 1;
+  font-size: $font-size-xs;
+  color: $color-text-disabled;
+}
+
+.toggle {
+  font-size: $font-size-xs;
+  color: $color-primary;
+}
+
+.body {
+  margin-top: $spacing-xs;
+}
+
+// 折叠时的三步预览,避免用户不知道下面有什么
+.preview {
+  margin-top: $spacing-xs;
+  padding-top: $spacing-xs;
+  border-top: 1rpx solid $color-divider;
+}
+
+.previewItem {
+  display: block;
+  font-size: $font-size-xs;
+  line-height: $line-height-normal;
+  color: $color-text-tertiary;
+  margin-bottom: 4rpx;
+  @include text-ellipsis;
+}
+
+.step {
+  padding: $spacing-xs 0;
+  border-top: 1rpx dashed $color-border;
+}
+
+.step:first-child {
+  border-top: none;
+}
+
+.stepError {
+  background: rgba(245, 63, 63, 0.05);
+}
+
+.stepTimeout {
+  background: rgba(255, 125, 0, 0.06);
+}
+
+.stepHead {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.stepIcon {
+  font-size: $font-size-xs;
+  margin-right: 6rpx;
+}
+
+.stepLabel {
+  font-size: $font-size-xs;
+  font-weight: $font-weight-medium;
+  color: $color-text-secondary;
+}
+
+.stepTool {
+  margin-left: $spacing-xs;
+  padding: 0 10rpx;
+  font-size: $font-size-xs;
+  color: $color-primary;
+  background: rgba(22, 93, 255, 0.08);
+  border-radius: $radius-xs;
+}
+
+.stepCost {
+  margin-left: auto;
+  font-size: $font-size-xs;
+  color: $color-text-disabled;
+}
+
+.stepText {
+  display: block;
+  margin-top: 4rpx;
+  font-size: $font-size-sm;
+  line-height: $line-height-normal;
+  color: $color-text-secondary;
+  word-break: break-word;
+}
+
+.stepArgs {
+  display: block;
+  margin-top: 4rpx;
+  font-size: $font-size-xs;
+  color: $color-text-tertiary;
+  word-break: break-word;
+}
+
+.stepErrorText {
+  display: block;
+  margin-top: 4rpx;
+  font-size: $font-size-xs;
+  color: $color-error;
+}
+
+// ==================== 引用 ====================
+.refList {
+  margin-top: $spacing-xs;
+}
+
+.refItem {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  padding: 6rpx 0;
+}
+
+.refBadge {
+  flex-shrink: 0;
+  margin-right: $spacing-xs;
+  font-size: $font-size-xs;
+  color: $color-primary;
+  font-weight: $font-weight-medium;
+}
+
+.refBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.refSource {
+  display: block;
+  font-size: $font-size-xs;
+  color: $color-text-secondary;
+}
+
+.refQuote {
+  display: block;
+  margin-top: 2rpx;
+  font-size: $font-size-xs;
+  line-height: $line-height-normal;
+  color: $color-text-tertiary;
+  word-break: break-word;
+}
+
+// ==================== 句子级溯源 ====================
+.sentenceBlock {
+  margin-top: $spacing-xs;
+  padding: $spacing-xs $spacing-sm;
+  background: $color-bg-card;
+  border-radius: $radius-sm;
+}
+
+.sentenceTitle {
+  display: block;
+  font-size: $font-size-xs;
+  color: $color-text-tertiary;
+  margin-bottom: $spacing-xs;
+}
+
+.sentence {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  padding: 6rpx 0;
+  border-top: 1rpx solid $color-divider;
+}
+
+.sentence:first-of-type {
+  border-top: none;
+}
+
+.sentenceNoRef .sentenceText {
+  color: $color-text-tertiary;
+}
+
+.sentenceIndex {
+  flex-shrink: 0;
+  width: 32rpx;
+  font-size: $font-size-xs;
+  color: $color-text-disabled;
+}
+
+.sentenceBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.sentenceText {
+  display: block;
+  font-size: $font-size-sm;
+  line-height: $line-height-normal;
+  color: $color-text-primary;
+  word-break: break-word;
+}
+
+.sentenceHint {
+  display: block;
+  margin-top: 2rpx;
+  font-size: $font-size-xs;
+  color: $color-text-disabled;
+}
+
+/* 系统推断绑定的来源:与「模型显式引用」在视觉上明确区分,避免被当成硬依据 */
+.sentenceInferred {
+  margin-top: 4rpx;
+  padding: 8rpx 12rpx;
+  background: $color-bg-hover;
+  border-left: 4rpx solid $color-warning;
+  border-radius: 8rpx;
+}

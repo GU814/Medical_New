@@ -104,6 +104,10 @@ def remember_turn(user_id: int, session_id: str, stage: int,
                 "stage": int(stage),
                 "kind": "turn",
                 "ts": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                # 检索时 include 取不到 ids(ChromaDB 会抛错),故在元数据里留一份,
+                # 溯源时直接从这里取,保证「这句结论来自哪一轮」可回溯。
+                "doc_id": doc_id,
+                "turn_index": int(turn_index),
             }],
         )
         return True
@@ -157,6 +161,8 @@ def remember_episode(user_id: int, session_id: str, patient_data: dict,
                 "session_id": str(session_id),
                 "kind": "episode",
                 "ts": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                # 同上:检索拿不到 ids,元数据里留一份供溯源
+                "doc_id": doc_id,
             }],
         )
         return True
@@ -199,6 +205,8 @@ def search_memories(user_id: int, query: str, top_k: int = None,
             query_texts=[query],
             n_results=min(top_k * 2, count),  # 多取一倍,阈值过滤后可能不足
             where=where,
+            # 注意:include 加 "ids" 会让 ChromaDB 抛 "Expected include item to be one of ...",
+            # 整个记忆检索失败。doc_id 已在写入时放进元数据,从那里取(见下方 mem_id)。
             include=["documents", "metadatas", "distances"],
         )
 
@@ -211,6 +219,7 @@ def search_memories(user_id: int, query: str, top_k: int = None,
             distance = results["distances"][0][i] if results["distances"] else 1.0
             if distance > MEMORY_RELEVANCE_THRESHOLD:
                 continue
+            mem_id = str(meta.get("doc_id") or "")
             memories.append({
                 "text": doc,
                 "kind": meta.get("kind", "turn"),
@@ -218,8 +227,20 @@ def search_memories(user_id: int, query: str, top_k: int = None,
                 "stage": meta.get("stage"),
                 "distance": distance,
                 "relevance_score": round(1 - distance, 4),
+                # 溯源标识:写入时为 {session_id}_t{turn_index} 或 {session_id}_episode,
+                # 取出后即可把某句结论回溯到具体历史轮次
+                "id": mem_id,
+                "session_id": meta.get("session_id", ""),
             })
 
+        # 阈值过滤后为空是「长期记忆实际失效」的常见形态(口语化对话的语义距离偏大),
+        # 静默返回会让上层以为用户没有历史记忆。打点后可从日志直接判定。
+        if not memories:
+            best = min(results["distances"][0]) if results.get("distances") else None
+            logger.info(
+                f"记忆检索命中 0 条(阈值 {MEMORY_RELEVANCE_THRESHOLD};"
+                f"最近距离={best if best is None else round(best, 4)};query={query[:30]!r})"
+            )
         memories.sort(key=lambda x: x["relevance_score"], reverse=True)
         return memories[:top_k]
 

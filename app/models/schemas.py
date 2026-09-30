@@ -21,6 +21,9 @@ class ProfileUpdate(BaseModel):
     nickname: Optional[str] = None
     avatar_url: Optional[str] = None
     phone: Optional[str] = None
+    # 登录资料:新会话创建时预填,避免跨会话重复询问(年龄/性别)
+    age: Optional[int] = Field(None, ge=0, le=150, description="年龄")
+    gender: Optional[str] = Field(None, max_length=10, description="性别")
 
 
 # ==================== 问诊会话 ====================

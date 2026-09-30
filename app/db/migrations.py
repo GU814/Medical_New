@@ -10,6 +10,10 @@
 - v1: 新建 users / consultation_sessions / user_keys / audit_logs / share_links
 - v2: patients_info 增加 user_id 外键 + chief_complaint_preview
 - v3: family_members / feedback(P2 预留表,空实现)
+- v5: 全新库补建 patients_info(v2 全新库会跳过,故单独兜底)
+- v6: 修复 v5 建表缺陷 —— created_at 缺 DEFAULT,而 repositories 的 INSERT 不含该列,
+      每次保存必现 NOT NULL 约束失败(报告在聊天可见但「就诊记录」永远为空),重建表补默认值
+- v7: users 增加登录资料列 profile_age / profile_gender(供新会话预填,避免跨会话重复询问)
 """
 
 import logging
@@ -286,12 +290,179 @@ def migrate_v4(conn: sqlite3.Connection):
     conn.commit()
 
 
+def migrate_v5(conn: sqlite3.Connection):
+    """全新库补建 patients_info(历史就诊记录主表)
+
+    v2 只做增量 ALTER,全新库(表不存在)时直接跳过,导致 patients_info 永远缺失,
+    而 repositories 对它的读写不受迁移保护 → 新增本迁移兜底建表。
+    """
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS patients_info (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            patient_name TEXT,
+            patient_gender TEXT,
+            patient_age INTEGER DEFAULT 0,
+            chief_complaint TEXT,
+            present_illness TEXT,
+            past_history TEXT,
+            system_review TEXT,
+            personal_history TEXT,
+            family_history TEXT,
+            diagnosis TEXT,
+            full_report TEXT,
+            visit_date TEXT NOT NULL,
+            visit_count INTEGER NOT NULL DEFAULT 1,
+            chief_complaint_preview TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_records_user_date "
+        "ON patients_info(user_id, visit_date DESC)"
+    )
+    conn.commit()
+
+
+def migrate_v6(conn: sqlite3.Connection):
+    """修复 v5 建表缺陷:patients_info.created_at 缺 DEFAULT
+
+    repositories.save_patient_record 的 INSERT 不包含 created_at,
+    若该列 NOT NULL 且无默认值,每次保存都抛 IntegrityError(被上层吞掉),
+    表现为:报告在对话里能看到,但「就诊记录」页永远查不到。
+    SQLite 不支持修改列默认值,故按标准流程重建表(保留已有数据)。
+    """
+
+    if not _table_exists(conn, "patients_info"):
+        return
+
+    # 已有默认值则无需处理(全新库由修正后的 v5 直接建对)
+    cur = conn.execute("PRAGMA table_info(patients_info)")
+    for row in cur.fetchall():
+        if row[1] == "created_at" and row[4]:  # row[4] = dflt_value
+            return
+
+    logger.info("patients_info.created_at 缺少默认值,重建表修复 ...")
+
+    # 重建期间关闭外键(share_links 引用本表;DDL 在 autocommit 下执行,无未决事务)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute(
+        """
+        CREATE TABLE patients_info_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            patient_name TEXT,
+            patient_gender TEXT,
+            patient_age INTEGER DEFAULT 0,
+            chief_complaint TEXT,
+            present_illness TEXT,
+            past_history TEXT,
+            system_review TEXT,
+            personal_history TEXT,
+            family_history TEXT,
+            diagnosis TEXT,
+            full_report TEXT,
+            visit_date TEXT NOT NULL,
+            visit_count INTEGER NOT NULL DEFAULT 1,
+            chief_complaint_preview TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO patients_info_new(
+            id, user_id, patient_name, patient_gender, patient_age,
+            chief_complaint, present_illness, past_history, system_review,
+            personal_history, family_history, diagnosis, full_report,
+            visit_date, visit_count, chief_complaint_preview, created_at
+        )
+        SELECT
+            id, user_id, patient_name, patient_gender, patient_age,
+            chief_complaint, present_illness, past_history, system_review,
+            personal_history, family_history, diagnosis, full_report,
+            visit_date, visit_count, chief_complaint_preview, created_at
+        FROM patients_info
+        """
+    )
+    conn.execute("DROP TABLE patients_info")
+    conn.execute("ALTER TABLE patients_info_new RENAME TO patients_info")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_records_user_date "
+        "ON patients_info(user_id, visit_date DESC)"
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.commit()
+    logger.info("patients_info 重建完成,created_at 已补默认值")
+
+
+def migrate_v7(conn: sqlite3.Connection):
+    """users 增加登录资料列:profile_age / profile_gender
+
+    登录界面录入的基本信息存到这里;新会话创建时预填进 ConsultationSession,
+    使模型不再跨会话重复询问年龄/性别。
+    """
+    if not _column_exists(conn, "users", "profile_age"):
+        conn.execute("ALTER TABLE users ADD COLUMN profile_age INTEGER")
+        logger.info("users 已增加 profile_age 列")
+    if not _column_exists(conn, "users", "profile_gender"):
+        conn.execute("ALTER TABLE users ADD COLUMN profile_gender TEXT")
+        logger.info("users 已增加 profile_gender 列")
+    conn.commit()
+
+
+def migrate_v8(conn: sqlite3.Connection):
+    """新增 session_steps:保存每一轮问答的推理过程(Thought/Action/Observation)与知识溯源引用。
+
+    独立建表,不改动 consultation_sessions 的既有字段与关联关系;
+    text/refs/sentences/args 含患者原话与病史片段,由 service 层加密后写入。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_steps (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER NOT NULL,
+            session_id    TEXT NOT NULL,
+            turn_index    INTEGER NOT NULL,
+            seq           INTEGER NOT NULL,
+            step_type     TEXT NOT NULL,          -- note/thought/action/observation/final/fallback
+            status        TEXT,                   -- ok/error/timeout/skipped
+            branch        TEXT,                   -- direct_qa / intake
+            tool          TEXT,
+            args_json     TEXT,                   -- 加密(action 参数)
+            text          TEXT,                   -- 加密(步骤正文/摘要)
+            refs_json     TEXT,                   -- 加密(知识溯源引用)
+            sentences_json TEXT,                  -- 加密(句子级溯源结果)
+            elapsed_ms    INTEGER,
+            ts            TEXT,
+            fallback_reason TEXT,
+            created_at    TEXT NOT NULL,
+            UNIQUE(session_id, turn_index, seq)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_steps_session "
+        "ON session_steps(session_id, turn_index)"
+    )
+    conn.commit()
+
+
 # 迁移注册表:(version, function)
 _MIGRATIONS = [
     (1, migrate_v1),
     (2, migrate_v2),
     (3, migrate_v3),
     (4, migrate_v4),
+    (5, migrate_v5),
+    (6, migrate_v6),
+    (7, migrate_v7),
+    (8, migrate_v8),
 ]
 
 

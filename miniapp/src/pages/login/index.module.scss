@@ -71,3 +71,102 @@
   color: $color-text-tertiary;
   margin: $spacing-xs $spacing-sm;
 }
+
+/* ---- 登录后个人信息录入 ---- */
+.profileForm {
+  width: $max-content-width;
+  background: $color-bg-card;
+  border-radius: $radius-lg;
+  box-shadow: $shadow-card;
+  padding: $spacing-lg $spacing-lg $spacing-md;
+  margin-bottom: $spacing-lg;
+  display: flex;
+  flex-direction: column;
+}
+
+.formTitle {
+  font-size: $font-size-lg;
+  font-weight: $font-weight-semibold;
+  color: $color-text-primary;
+  text-align: center;
+  margin-bottom: $spacing-xs;
+}
+
+.formHint {
+  font-size: $font-size-xs;
+  color: $color-text-tertiary;
+  text-align: center;
+  margin-bottom: $spacing-lg;
+}
+
+.fieldRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: $spacing-md;
+}
+
+.fieldLabel {
+  width: 120rpx;
+  flex-shrink: 0;
+  font-size: $font-size-sm;
+  color: $color-text-secondary;
+}
+
+.genderRow {
+  display: flex;
+  flex-direction: row;
+}
+
+.genderTag {
+  padding: 12rpx 36rpx;
+  margin-right: $spacing-sm;
+  border-radius: $radius-button;
+  background: $color-bg-page;
+  border: 1rpx solid $color-border;
+  font-size: $font-size-sm;
+  color: $color-text-secondary;
+}
+
+.genderTagActive {
+  background: rgba($color-primary, 0.1);
+  border: 1rpx solid $color-primary;
+  color: $color-primary;
+}
+
+.ageInput {
+  flex: 1;
+  height: 64rpx;
+  padding: 0 $spacing-sm;
+  border-radius: $radius-sm;
+  background: $color-bg-page;
+  border: 1rpx solid $color-border;
+  font-size: $font-size-sm;
+  color: $color-text-primary;
+}
+
+.inputPlaceholder {
+  color: $color-text-tertiary;
+}
+
+.saveBtn {
+  width: 100%;
+  height: $button-height-lg;
+  line-height: $button-height-lg;
+  border-radius: $radius-button;
+  background: linear-gradient(135deg, $color-primary 0%, $color-primary-light 100%);
+  color: $color-text-white;
+  font-size: $font-size-md;
+  font-weight: $font-weight-medium;
+  margin-bottom: $spacing-sm;
+  &:active {
+    opacity: 0.9;
+  }
+}
+
+.skipText {
+  text-align: center;
+  font-size: $font-size-xs;
+  color: $color-text-tertiary;
+  padding: $spacing-xs 0;
+}

@@ -46,5 +46,7 @@ async def update_profile(
         nickname=req.nickname,
         avatar_url=req.avatar_url,
         phone=req.phone,
+        age=req.age,
+        gender=req.gender,
     )
     return {"ok": True}

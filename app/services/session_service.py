@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+import config
 from app.core import crypto
 from app.db import repositories
 
@@ -38,12 +39,39 @@ def create_session(user_id: int, session_cls):
     session_id = _gen_session_id()
     session = session_cls(session_id=session_id)
     session.user_id = user_id
+    _apply_user_profile(session, user_id)
     persist(session)
     with _cache_lock:
         _evict_if_needed()
         _cache[session_id] = session
     logger.info(f"创建会话 session_id={session_id} user_id={user_id}")
     return session
+
+
+def _apply_user_profile(session, user_id: int):
+    """
+    把登录资料(profile_age/profile_gender)预填进新会话。
+
+    用户在登录界面录入过年龄/性别时,新开对话直接带入,
+    模型不再跨会话重复询问(会话内患者主动陈述的值始终优先,这里只在为空时填)。
+    """
+    try:
+        user = repositories.get_user(user_id) or {}
+        gender = (user.get("profile_gender") or "").strip()
+        age = user.get("profile_age") or 0
+        prefilled = False
+        if gender and not session.patient_gender:
+            session.patient_gender = gender
+            prefilled = True
+        if age and not session.patient_age:
+            session.patient_age = int(age)
+            prefilled = True
+        session.profile_prefilled = prefilled
+        if prefilled:
+            logger.info(f"已预填登录资料 session_id={session.session_id} "
+                        f"gender={session.patient_gender} age={session.patient_age}")
+    except Exception as e:
+        logger.warning(f"预填用户资料失败(不影响会话创建): {e}")
 
 
 def get_or_create(session_id: Optional[str], user_id: int, session_cls):
@@ -160,6 +188,8 @@ def reset_session(session_id: str, user_id: int, session_cls):
     with _cache_lock:
         _cache.pop(session_id, None)
     repositories.delete_session(session_id, user_id)
+    # 推理步骤是随会话产生的附属数据,会话删除时一并清理,避免孤儿记录
+    repositories.delete_session_steps(session_id, user_id)
     return create_session(user_id, session_cls)
 
 
@@ -191,6 +221,141 @@ def get_history(session_id: str, user_id: int, cursor: int = 0, size: int = 20):
     items = history[cursor:end]
     next_cursor = end if end < total else None
     return {"items": items, "next_cursor": next_cursor}
+
+
+# ==================== 推理过程(session_steps) ====================
+
+
+def persist_session_trace(session, trace) -> bool:
+    """
+    落库一轮的推理过程(步骤 + 知识引用)。
+
+    - text/refs/sentences/args 走列级加密(与会话历史同一套密钥体系);
+    - 失败只记日志,绝不向上抛 —— 推理过程属于增强能力,不能影响回答本身。
+    """
+    user_id = getattr(session, "user_id", 0)
+    if not config.REACT_PERSIST:
+        return False
+    # 桌面模式 user_id=0 也照样落库:否则桌面端产生的推理过程永远查不到,
+    # 历史回放只能给出「为什么没有」的兜底文案,与可解释性的目标相悖。
+    if not user_id:
+        logger.debug("ReAct 轨迹以 user_id=0 落库(桌面模式)")
+    steps = []
+    try:
+        for s in trace.steps:
+            payload = {
+                "seq": s.seq,
+                "step_type": s.type,
+                "status": s.status,
+                "tool": s.tool,
+                "args": json.dumps(s.args or {}, ensure_ascii=False) if s.args else None,
+                "text": s.text or None,
+                "refs": json.dumps([r.to_dict() for r in s.refs], ensure_ascii=False) if s.refs else None,
+                "sentences": json.dumps(s.sentences, ensure_ascii=False) if s.sentences else None,
+                "elapsed_ms": s.elapsed_ms,
+                "ts": s.ts,
+            }
+            steps.append(crypto.encrypt_record(user_id, payload, crypto.STEP_SENSITIVE_FIELDS))
+        repositories.save_session_steps(
+            user_id, trace.session_id, trace.turn_index, steps,
+            branch=trace.branch, fallback_reason=trace.fallback_reason,
+        )
+        return True
+    except Exception as e:
+        # 带堆栈:曾经出现过只报「FOREIGN KEY constraint failed」却无从定位的情况
+        logger.warning(f"推理过程落库失败(不影响回答): {e}", exc_info=True)
+        return False
+
+
+def get_session_steps(session_id: str, user_id: int, turn_index: int = None) -> dict:
+    """
+    读取推理过程供历史回放。
+
+    返回:
+      {"session_id", "turns": [{"turn_index", "branch", "fallback_reason", "steps": [...]}],
+       "missing_reason": 整个会话一条记录都没有时的说明文案}
+
+    注意:历史回放不允许出现「暂无推理过程」这类空态文案,缺数据时必须给出
+    「为什么缺」的具体原因(见 _missing_reason),前端据此渲染提示。
+    """
+    rows = repositories.get_session_steps(session_id, user_id, turn_index)
+    if not rows:
+        return {
+            "session_id": session_id,
+            "turns": [],
+            "missing_reason": _missing_reason(session_id, user_id, turn_index, rows),
+        }
+
+    by_turn: dict = {}
+    branch = ""
+    fallback_reason = None
+    for r in rows:
+        ti = r.get("turn_index")
+        branch = r.get("branch") or branch
+        fallback_reason = r.get("fallback_reason") or fallback_reason
+        try:
+            dec = crypto.decrypt_record(user_id, r, crypto.STEP_SENSITIVE_FIELDS)
+        except Exception:
+            dec = {k: r.get(k) for k in
+                   ("seq", "step_type", "status", "tool", "elapsed_ms", "ts")}
+        step = {
+            "seq": dec.get("seq"),
+            "type": dec.get("step_type"),
+            "status": dec.get("status"),
+            "tool": dec.get("tool"),
+            "text": dec.get("text") or "",
+            "elapsed_ms": dec.get("elapsed_ms") or 0,
+            "ts": dec.get("ts"),
+        }
+        refs_raw = dec.get("refs")
+        if refs_raw:
+            try:
+                step["refs"] = json.loads(refs_raw)
+            except (json.JSONDecodeError, TypeError):
+                step["refs"] = []
+        else:
+            step["refs"] = []
+        sentences_raw = dec.get("sentences")
+        if sentences_raw:
+            try:
+                step["sentences"] = json.loads(sentences_raw)
+            except (json.JSONDecodeError, TypeError):
+                step["sentences"] = None
+        by_turn.setdefault(ti, []).append(step)
+
+    turns = []
+    for ti in sorted(by_turn.keys()):
+        steps = sorted(by_turn[ti], key=lambda x: (x.get("seq") or 0))
+        turns.append({
+            "turn_index": ti,
+            "branch": branch,
+            "fallback_reason": fallback_reason,
+            "steps": steps,
+            "total_ms": sum(s.get("elapsed_ms") or 0 for s in steps),
+        })
+    # 指定轮次但无记录时,给出该轮缺失原因(同样不允许空态)
+    if turn_index is not None and not any(t["turn_index"] == turn_index for t in turns):
+        return {
+            "session_id": session_id,
+            "turns": [],
+            "missing_reason": _missing_reason(session_id, user_id, turn_index, rows),
+        }
+    return {"session_id": session_id, "turns": turns, "missing_reason": None}
+
+
+def _missing_reason(session_id: str, user_id: int, turn_index, rows: list) -> str:
+    """解释「为什么这段历史没有推理过程」,供前端直接展示,避免空文案。"""
+    if turn_index is not None:
+        return (
+            f"第 {turn_index + 1} 轮问答未记录推理过程。"
+            f"可能原因:该轮由「推理过程」功能上线前的版本产生,或当时该轮未命中直接问答分支。"
+        )
+    if not config.ENABLE_REACT:
+        return "当前服务未启用推理过程记录(ENABLE_REACT=false),因此本会话的历史对话不含推理步骤。"
+    return (
+        "本会话的对话早于「推理过程」功能上线,当时未记录推理步骤;"
+        "如需查看推理过程,请开启 ENABLE_REACT 后重新发起一轮问答。"
+    )
 
 
 def _evict_if_needed():

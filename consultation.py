@@ -17,6 +17,7 @@ import llm_client
 import knowledge_base
 import memory_store
 import report_generator
+from react import loop as react_loop
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +222,10 @@ SYSTEM_PROMPT_GLOBAL = """你是一位专业的医学问诊AI助手。你的任�
 5. 不要给出明确诊断，只收集信息
 6. 用中文交流
 7. 当你判断某个阶段的信息已经充分时，主动过渡到下一阶段
+8. 【铁律·禁止重复询问】上下文里标注为「已收集」「已确认」的信息，患者已经回答过了。
+   除非患者本人明确更正，否则**绝不允许**再次询问、复述确认或换个说法再问一遍。
+   这是最高优先级约束 —— 重复问同一个问题会让患者认为你没在听他说话。
+   你应当基于已有信息继续推进到尚未了解的内容。
 
 【重要】你必须在回复的最末尾附上一个JSON块，格式如下：
 ```json
@@ -328,6 +333,9 @@ DIRECT_QA_SYSTEM = """你是一位严谨的医学健康咨询助手。用户正�
 4. 如问题涉及紧急/严重情况，提示立即就医。
 5. 回答简洁（3-6 句），用中文，语气温和专业。
 6. 文末附一句：⚠️ 以上为健康科普，不能替代医生诊断。
+7. 【铁律·依据优先】只能依据上文「【检索到的资料】」作答。资料未覆盖的内容，一律不得推测，也不得用通用医学常识自行补全。
+8. 【铁律·零命中拒答】若没有任何可用资料，必须原样输出「知识库未覆盖，建议就医。」，不得改写、不得增减。
+9. 【铁律·范围边界】本助手只覆盖用药、症状、疾病、日常护理等健康科普；问题超出该范围时，先说明边界，再建议用户描述具体健康问题或及时就医。
 """
 
 # 意图分类用关键词（规则优先，零额外 LLM 开销）
@@ -373,6 +381,8 @@ class ConsultationSession:
         self._remember_task = None  # 后台记忆写入任务(避免被 GC)
         self._report_task = None    # 后台报告生成任务(避免被 GC)
         self._stage_turns = 0     # 当前阶段已进行的回合数(供阶段推进兜底判定)
+        # 是否从登录资料预填了性别/年龄(仅影响提示词,不参与序列化)
+        self.profile_prefilled = False
 
     # ==================== 序列化(供会话持久化)====================
     def to_dict(self) -> dict:
@@ -604,7 +614,7 @@ class ConsultationSession:
             return bool(self.system_review)
         return False
 
-    def _fallback_stage_advance(self) -> bool:
+    def _fallback_stage_advance(self, display_text: str = "") -> bool:
         """
         LLM 未给出有效阶段判定时的确定性推进兜底。
 
@@ -631,13 +641,86 @@ class ConsultationSession:
         if not ((ready and self._stage_turns >= min_turns) or overdue):
             return False
 
-        self.stage = min(stage + 1, ConsultationState.STAGE_COMPLETE)
+        target = min(stage + 1, ConsultationState.STAGE_COMPLETE)
+        # 进入终末阶段(=触发报告生成)门槛更高:数据齐备 且 本轮没有再向患者提问。
+        # 超时兜底只允许推进到 STAGE_REVIEW,不能在信息缺失或问题未回答时强行完结,
+        # 否则会出现「患者还没回答完就出报告」。
+        if target >= ConsultationState.STAGE_COMPLETE and not self._ready_to_finalize(display_text):
+            logger.info(
+                f"兜底推进暂不进入终末阶段: 报告所需数据未收齐或仍在提问 "
+                f"session={self.session_id} stage={stage}"
+            )
+            return False
+
+        self.stage = target
         self._stage_turns = 0
         logger.info(
             f"阶段兜底推进: {stage} -> {self.stage} "
             f"(数据齐全={ready}, 已超时={overdue})"
         )
         return True
+
+    def _can_finalize(self) -> bool:
+        """
+        是否具备生成报告所需的最低数据条件。
+
+        修复「问诊没问完就出报告」:进入 STAGE_COMPLETE 前必须已收齐
+        姓名/性别/年龄/主诉/现病史/系统回顾 —— 这几项缺失时报告只会是残缺的。
+        """
+        return bool(
+            self.patient_name and self.patient_gender and self.patient_age
+            and self.chief_complaint and self.present_illness and self.system_review
+        )
+
+    def _reply_asks_question(self, display_text: str) -> bool:
+        """本条回复是否仍在向患者提问(回复中含任何待回答的问句)。
+
+        实测模型会一边追问「是否还有其他症状?」一边输出 stage_complete=true,
+        若不拦截,报告会在患者还没回答时就开始生成。
+
+        2026-09-26 修复:原实现只看末尾字符,但模型常在问句后补一句陈述
+        (如「……是否有其他症状？这些信息有助于我们进行系统回顾。」),
+        问号在中间、句号结尾 → 漏判 → 第五步提问后报告提前开跑(线上实测)。
+        只要本轮回复里存在任何问句,就必须等用户作答,因此改为全文扫描。
+        """
+        text = (display_text or "").rstrip()
+        if not text:
+            return False
+        return ("？" in text) or ("?" in text)
+
+    def _ready_to_finalize(self, display_text: str = "") -> bool:
+        """能否进入 STAGE_COMPLETE:数据齐备 且 模型本轮没有再向患者提问"""
+        if not self._can_finalize():
+            return False
+        if self._reply_asks_question(display_text):
+            return False
+        return True
+
+    def _apply_stage_transition(self, extracted_info: dict, display_text: str) -> str:
+        """
+        统一处理阶段转换(流式与非流式共用),返回需追加到回复末尾的提示语(可能为空)。
+
+        关键点:把「跳到 STAGE_COMPLETE」单独设门槛 —— 未满足条件时最多推进到
+        STAGE_REVIEW,既不误触发报告,也不会因信息缺失卡在早期阶段。
+        """
+        if extracted_info and self._as_bool(extracted_info.get("stage_complete")):
+            next_stage = self._normalize_stage(extracted_info.get("next_stage"), self.stage + 1)
+            if next_stage > self.stage:
+                target = min(next_stage, ConsultationState.STAGE_COMPLETE)
+                if target >= ConsultationState.STAGE_COMPLETE and not self._ready_to_finalize(display_text):
+                    logger.info(
+                        f"拦截过早完结: 数据未收齐或模型仍在提问 session={self.session_id} "
+                        f"stage={self.stage} data_ready={self._can_finalize()}"
+                    )
+                    target = ConsultationState.STAGE_REVIEW
+                if target > self.stage:
+                    self.stage = target
+                    self._stage_turns = 0
+                    logger.info(f"阶段转换: -> {self.stage}")
+                    return self._finalize_stage_advance()
+        elif self._fallback_stage_advance(display_text):
+            return self._finalize_stage_advance()
+        return ""
 
     def _finalize_stage_advance(self) -> str:
         """阶段推进后的收尾：到达终末阶段则标记完成。返回需追加到回复的提示语"""
@@ -718,8 +801,109 @@ class ConsultationSession:
 
         session_service.persist(self)
 
-    def _update_patient_info(self, info: dict):
-        """根据提取的信息更新患者数据（字段类型统一做容错，见 _normalize_age）"""
+    # ---------- 字段累积合并与确定性兜底提取 ----------
+    # 「患者说了但模型没用上」「反复问同一个问题」两大现象的共同断点:
+    # ① 原实现每轮整体覆盖自由文本字段,模型只写本轮内容时前几轮的细节被顶掉;
+    # ② 模型漏输出 JSON 的那一轮,信息没有任何其他通道能补回来。
+    # 下面两个方法是这两个断点的补丁。
+
+    # 亲属/他人指代:出现这些词时"XX岁"说的多半不是患者本人,禁止抽年龄
+    _KIN_WORDS_RE = re.compile(r"(孩子|女儿|儿子|宝宝|小孩|婴幼儿|孙子|外孙|孙女|"
+                               r"朋友|同事|同学|家人|母亲|父亲|妈妈|爸爸|老婆|老公|患者家属)")
+
+    @staticmethod
+    def _merge_text_field(old: str, new: str) -> str:
+        """
+        自由文本字段累积合并:保留旧值,把新值中「旧值没有的句子」追加在后面。
+
+        为什么不能直接赋值(旧行为):
+        提示词要求「只提取对话中明确提到的信息」,7b 模型往往只写**本轮**提到的内容。
+        直接赋值会让上一轮采集的完整描述被这一轮更短的摘要顶掉 ——
+        上下文里的"已收集-现病史"随之缩水,模型判定信息不足,于是把问过的问题再问一遍。
+        """
+        old = (old or "").strip()
+        new = (new or "").strip()
+        if not new:
+            return old
+        if not old:
+            return new
+        if new in old:
+            return old          # 模型复述了已收集内容,不重复追加
+        if old in new:
+            return new          # 新值是旧值的超集(模型补全了),取更完整的
+
+        # 以句为单位去重追加,避免同一句话反复堆砌
+        sep_re = re.compile(r"[。！？；;]")
+        old_sents = [s.strip() for s in sep_re.split(old) if s.strip()]
+        have = set(old_sents)
+        for s in sep_re.split(new):
+            s = s.strip()
+            if not s:
+                continue
+            # 子串级去重:模型改写过的近似句不重复计入
+            if s not in have and not any(s in o or o in s for o in old_sents if abs(len(s) - len(o)) < 12):
+                old_sents.append(s)
+                have.add(s)
+        merged = "。".join(old_sents)
+        if not merged.endswith(("。", "！", "？")):
+            merged += "。"
+        limit = getattr(config, "CONSULT_FIELD_MAX_LEN", 600) or 600
+        if len(merged) > limit:
+            # 超长时优先保留较新的内容(尾部),旧细节已被报告消费过
+            merged = "…" + merged[-limit:]
+        return merged
+
+    @classmethod
+    def _regex_extract_basics(cls, text: str) -> dict:
+        """
+        从用户原话确定性补抽年龄/性别。
+
+        只在结构化字段为空时用于补位(见 _update_patient_info),**不覆盖模型已给的值**。
+        这是「字段校验仅判空」的补丁:模型漏输出 JSON 的那一轮,用户信息原本会永久丢失。
+        规则刻意保守 —— 宁漏勿错,抽错的性别/年龄会直接写进报告。
+        """
+        out: dict = {}
+        t = (text or "").strip()
+        if not t:
+            return out
+
+        # 年龄:数字 + (周岁|岁)。出现亲属词时跳过,那通常说的是别人
+        if not cls._KIN_WORDS_RE.search(t):
+            m = re.search(r"(\d{1,3})\s*(?:周?岁|years?\s*old)", t)
+            if m:
+                age = int(m.group(1))
+                if 0 < age <= 120:
+                    out["patient_age"] = age
+
+        # 性别:只在「我是男/女」「性别:男」「35岁，男」这类明确表述时抽取
+        gender_patterns = (
+            r"性别\s*[:：]?\s*(男|女)",
+            r"(?:我是|本人)\s*(男|女)(?:性|的|人)?",
+            r"\d{1,3}\s*(?:周?岁)?\s*[，,、]?\s*(男|女)(?:性|的)?(?:[，,。！？]|$)",
+        )
+        for pat in gender_patterns:
+            gm = re.search(pat, t)
+            if gm:
+                out["patient_gender"] = gm.group(1)
+                break
+        return out
+
+    def _update_patient_info(self, info: dict, user_text: str = ""):
+        """
+        根据提取的信息更新患者数据（字段类型统一做容错，见 _normalize_age）
+
+        user_text: 本轮用户原话,用于模型漏提取时的确定性补抽(见 _regex_extract_basics)。
+        """
+        info = dict(info or {})
+
+        # 兜底补抽:仅填「模型没给且当前也为空」的字段,绝不覆盖已确认的值
+        if getattr(config, "CONSULT_REGEX_FALLBACK", True) and user_text:
+            for key, val in self._regex_extract_basics(user_text).items():
+                if info.get(key) in (None, "", 0):
+                    info[key] = val
+                    logger.info(f"兜底提取命中 {key}={val!r}（模型未输出该字段）")
+
+        # 姓名/性别/年龄属于「定长标量」,直接覆盖(患者更正时以最新为准)
         if info.get("patient_name"):
             self.patient_name = info["patient_name"]
         if info.get("patient_gender"):
@@ -727,18 +911,26 @@ class ConsultationSession:
         age = self._normalize_age(info.get("patient_age"))
         if age > 0:
             self.patient_age = age
-        if info.get("chief_complaint"):
-            self.chief_complaint = info["chief_complaint"]
-        if info.get("present_illness"):
-            self.present_illness = info["present_illness"]
-        if info.get("past_history"):
-            self.past_history = info["past_history"]
-        if info.get("personal_history"):
-            self.personal_history = info["personal_history"]
-        if info.get("family_history"):
-            self.family_history = info["family_history"]
-        if info.get("system_review"):
-            self.system_review = info["system_review"]
+
+        # 主诉:取更完整的那条(模型有时会先写"头痛",后写"头痛三天伴恶心")
+        new_cc = (info.get("chief_complaint") or "").strip()
+        if new_cc and len(new_cc) > len(self.chief_complaint or ""):
+            self.chief_complaint = new_cc
+
+        # 自由文本字段:累积合并(旧行为是覆盖,会丢前面几轮的细节)
+        merge = getattr(config, "CONSULT_FIELDS_MERGE", True)
+        for attr, key in (
+            ("present_illness", "present_illness"),
+            ("past_history", "past_history"),
+            ("personal_history", "personal_history"),
+            ("family_history", "family_history"),
+            ("system_review", "system_review"),
+        ):
+            new_val = (info.get(key) or "").strip()
+            if not new_val:
+                continue
+            setattr(self, attr,
+                    self._merge_text_field(getattr(self, attr, ""), new_val) if merge else new_val)
 
     def _query_patient_history(self, name: str):
         """查询患者历史记录(小程序模式按 user_id 限定作用域,桌面模式 user_id=0 兼容旧逻辑)"""
@@ -797,6 +989,10 @@ class ConsultationSession:
         # 如果有知识库参考，注入到用户输入中
         if kb_reference:
             enriched_input += f"\n\n【知识库参考信息】\n{kb_reference}\n请参考以上医学知识辅助问诊，但不要直接向患者引用知识库原文。"
+        # 禁止重复询问的紧凑提示:紧邻用户消息与 JSON 要求,对抗长提示开头的指令衰减
+        hint = self._no_repeat_hint()
+        if hint:
+            enriched_input += f"\n\n{hint}"
         # 同流式分支:把 JSON 格式要求压到用户消息末尾,提高多轮后的结构化抽取命中率
         if config.CONSULT_JSON_REMINDER:
             enriched_input += f"\n\n{config.CONSULT_JSON_REMINDER}"
@@ -804,29 +1000,23 @@ class ConsultationSession:
         raw_reply = llm_client.chat(
             system_prompt=system_prompt,
             user_prompt=enriched_input,
-            history=self.conversation_history[-6:],
+            history=self.history_window(),
         )
 
         # 6. 从回复中分离对话文本和结构化JSON
         display_text, extracted_info = self._parse_llm_response(raw_reply)
 
         # 7. 更新患者信息（容错同上，异常不得中断阶段推进）
-        if extracted_info:
-            try:
-                self._update_patient_info(extracted_info)
-            except Exception as e:
-                logger.warning(f"更新患者信息失败(已忽略,不影响阶段推进): {e}")
+        #    注意:这里**不能**只在 extracted_info 非空时调用。模型漏输出 JSON 的那一轮,
+        #    唯一能救回信息的就是 _update_patient_info 里的确定性兜底提取(年龄/性别),
+        #    被 if 挡掉等于让这一轮的用户陈述永久丢失(旧实现在此丢失信息)。
+        try:
+            self._update_patient_info(extracted_info, user_input)
+        except Exception as e:
+            logger.warning(f"更新患者信息失败(已忽略,不影响阶段推进): {e}")
 
-        # 8. 处理阶段转换
-        if extracted_info and self._as_bool(extracted_info.get("stage_complete")):
-            next_stage = self._normalize_stage(extracted_info.get("next_stage"), self.stage + 1)
-            if next_stage > self.stage:
-                self.stage = min(next_stage, ConsultationState.STAGE_COMPLETE)
-                self._stage_turns = 0
-                logger.info(f"阶段转换: -> {self.stage}")
-                display_text += self._finalize_stage_advance()
-        elif self._fallback_stage_advance():
-            display_text += self._finalize_stage_advance()
+        # 8. 处理阶段转换(终端/桌面共用 _apply_stage_transition,含过早完结拦截)
+        display_text += self._apply_stage_transition(extracted_info, display_text)
 
         # 9. 在阶段1收集到姓名后查询历史记录
         if self.stage == ConsultationState.STAGE_BASIC_INFO and self.patient_name and self.history_data is None:
@@ -866,6 +1056,12 @@ class ConsultationSession:
         if not t:
             return "intake"
 
+        # 规则0(后加):短答复几乎都是对上一轮问题的**回答**,不是新提问。
+        # 旧实现没有这条,"男"、"35岁"、"没有"、"三天了"这类答复一旦沾上
+        # 疑问词或问号就会被引到问答分支,采集流程随之漏采本轮信息。
+        if len(t) <= 10 and not any(w in t for w in _QA_KEYWORDS):
+            return "intake"
+
         # 规则1：显式问号
         if "？" in t or "?" in t:
             return "question"
@@ -892,7 +1088,8 @@ class ConsultationSession:
                 top_k=2,
             )
         except Exception as e:
-            logger.debug(f"知识库检索失败（不影响主流程）: {e}")
+            # 同上:检索失败会让本轮变成「零命中」进而触发拒答话术,必须可见。
+            logger.warning(f"知识库检索失败（不影响主流程）: {e}")
             return ""
 
     def _retrieve_memory(self, user_input: str) -> str:
@@ -920,8 +1117,55 @@ class ConsultationSession:
                 refs.append(f"[记忆{i}] (时间: {r.get('ts', '')}, 类型: {r.get('kind', '')})\n{r['text']}")
             return "\n\n".join(refs)
         except Exception as e:
-            logger.debug(f"记忆检索失败（不影响主流程）: {e}")
+            # 从 debug 提到 warning:记忆检索异常此前完全不可见,排查「用户说过的信息
+            # 没被用上」时无法判断是检索失败还是根本没写入。失败仍需不阻断主流程。
+            logger.warning(f"记忆检索失败（不影响主流程）: {e}")
             return ""
+
+    def _no_repeat_hint(self) -> str:
+        """
+        紧凑的「已收集项，严禁重复询问」提示。
+
+        为什么需要它:_build_context 生成的"已收集"清单位于 enriched_input 的**最前面**,
+        而用户消息在最后面,中间隔着历史记忆和知识库检索结果 —— qwen2.5:7b 对长提示开头的
+        指令遵循度明显偏低,清单写了也常常照问不误。因此再生成一份极简版本,
+        贴在靠近用户消息的位置复述一次(成本只有几十字)。
+        """
+        if not getattr(config, "CONSULT_NO_REPEAT_HINT", True):
+            return ""
+        got = [label for label, val in (
+            ("姓名", self.patient_name),
+            ("性别", self.patient_gender),
+            ("年龄", self.patient_age),
+            ("主诉", self.chief_complaint),
+            ("现病史", self.present_illness),
+            ("既往史", self.past_history),
+            ("个人史", self.personal_history),
+            ("家族史", self.family_history),
+            ("系统回顾", self.system_review),
+        ) if val]
+        if not got:
+            return ""
+        return ("【已确认信息-严禁重复询问】" + "、".join(got)
+                + " 已在前面收集完毕，除非患者主动更正，本轮不得再次询问这些内容。")
+
+    def history_window(self) -> list:
+        """
+        注入 LLM 的历史消息窗口(条数由 CONSULT_HISTORY_TURNS 控制,默认 12 条 ≈ 6 轮)。
+
+        原实现在四处硬编码 `[-6:]`(≈3 轮):早期轮次提供的背景信息(过敏史、既往就诊等)
+        如果当时没被模型提取进结构化字段,3 轮后就从模型视野里彻底消失 ——
+        而长期记忆检索又刻意排除了当前会话(见 _retrieve_memory 的 exclude_session_id),
+        等于没有任何通道能把它找回来,于是表现为「答非所问」「重复问已问过的问题」。
+        """
+        n = getattr(config, "CONSULT_HISTORY_TURNS", 12)
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            n = 12
+        if n <= 0:
+            return list(self.conversation_history)
+        return self.conversation_history[-n:]
 
     def _retrieve_references(self, user_input: str) -> tuple:
         """一次性完成知识库+记忆双检索(供后台线程单次调度,减少线程切换)"""
@@ -945,11 +1189,104 @@ class ConsultationSession:
         except Exception as e:
             logger.debug(f"对话记忆写入失败（不影响主流程）: {e}")
 
+    def _persist_trace_async(self):
+        """把本轮 ReAct 轨迹丢到后台落库(异常安全,不阻塞 end 事件)。"""
+        trace = getattr(self, "_last_trace", None)
+        if not trace or not config.REACT_PERSIST:
+            return
+        try:
+            from app.services import session_service
+            asyncio.create_task(
+                asyncio.to_thread(session_service.persist_session_trace, self, trace)
+            )
+        except Exception as e:
+            logger.debug(f"推理过程落库调度失败(不影响主流程): {e}")
+
+    def _finalize_direct_qa(self, user_input: str, reply_text: str) -> str:
+        """
+        直接问答收尾(单次流程与 ReAct 流程共用):阶段兜底推进 → 历史追加 → 长记忆写入。
+
+        抽成独立方法是为了避免两条分支各写一遍收尾逻辑而走偏。
+        """
+        # ------------------------------------------------------------------
+        # QA 轮同样要做确定性补抽(仍零 LLM 成本)。
+        # 旧实现注释写着「QA 分支不做字段抽取」—— 于是用户在提问时顺带交代的背景
+        # ("我对青霉素过敏,能吃头孢吗?"、"我今年 40 岁,血压高能吃这个吗?")
+        # 永远不会进入结构化字段。几轮之后滑出对话窗口,信息就彻底消失了,
+        # 表现为「明明说过,后面回答却完全没用上」。
+        # 这里只走规则兜底提取(年龄/性别),不解析 JSON —— QA 提示词本就不要求输出 JSON。
+        # 必须放在阶段推进判定之前,否则补到的字段对本轮的推进判定不起作用。
+        try:
+            self._update_patient_info({}, user_input)
+        except Exception as e:
+            logger.warning(f"QA 轮字段补抽失败(已忽略): {e}")
+
+        # 问答轮次同样计入阶段推进兜底计数:否则用户连续提问会让 _stage_turns
+        # 永不增长、stage 永久卡住、报告永不触发(实测高频停滞场景)。
+        if self._fallback_stage_advance(reply_text):
+            reply_text += self._finalize_stage_advance()
+            # 推进到终末阶段:立即触发后台报告生成
+            self.maybe_start_report_task()
+        # 记录到对话历史（含紧急前缀），保持上下文连贯
+        self.conversation_history.append({"role": "assistant", "content": reply_text})
+        # 写入跨会话长记忆(内部已异常安全,失败只记日志不抛错)
+        self._remember_turn(user_input, reply_text)
+        return reply_text
+
     async def _stream_direct_qa(self, user_input: str, emergency_msg: str):
         """
         直接问答分支：RAG + 安全护栏，流式回答，不推进 5 阶段状态机。
-        Yields: {"event": "reply"|"end", "data": str}
+        Yields: {"event": "step"|"reply"|"end", "data": str}
+
+        当 ENABLE_REACT=true 时，先走 react.loop 的受控 ReAct 循环
+        (Thought/Action/Observation + 句子级引用),异常或降级则回退下方单次 LLM 流程。
         """
+        # 与问诊主链路一致:追加简洁性约束以压缩输出 token(本机约 16 tokens/s)
+        qa_system = DIRECT_QA_SYSTEM
+        if config.CONSULT_BRIEF_OUTPUT and config.DIRECT_QA_BRIEF_HINT:
+            qa_system = f"{DIRECT_QA_SYSTEM}\n{config.DIRECT_QA_BRIEF_HINT}"
+
+        turn_index = len(self.conversation_history) // 2
+
+        # ==================== ReAct 受控循环(可解释推理过程) ====================
+        # 仅接管本分支;采集态(5 阶段)、报告生成、路由层均不受影响。
+        if config.ENABLE_REACT:
+            streamed: list = []
+            try:
+                react_system = qa_system
+                async for ev in react_loop.stream_qa_with_react(
+                    session=self,
+                    user_input=user_input,
+                    emergency_msg=emergency_msg,
+                    turn_index=turn_index,
+                    qa_system=react_system,
+                ):
+                    if ev.get("event") == "reply":
+                        streamed.append(ev.get("data") or "")
+                    yield ev
+                reply_text = "".join(streamed)
+                # 推理过程落库(后台执行,失败不影响回答与 end 事件)
+                self._persist_trace_async()
+                self._finalize_direct_qa(user_input, reply_text)
+                yield {
+                    "event": "end",
+                    "data": json.dumps({
+                        "session_id": self.session_id,
+                        "stage": self.stage,
+                        "is_complete": self.is_complete,
+                        "reply_clean": reply_text,
+                        "report_status": self.report_status,
+                        # 前端可据此判断当前会话是否具备推理过程数据,决定回放时如何提示
+                        "react_enabled": bool(config.ENABLE_REACT),
+                    }, ensure_ascii=False),
+                }
+                return
+            except Exception as e:
+                # 降级:ReAct 任何异常都不应让用户拿不到回答,退回原单次流程重跑
+                logger.warning(f"ReAct 流程异常,降级为单次问答: {e}")
+                react_reason = str(e)
+
+        # ==================== 原单次问答流程(默认路径 / 降级路径) ====================
         # 知识库 + 历史记忆 双检索并发执行(两次 embedding 并行,降低首字前等待)
         kb_reference, memory_reference = await asyncio.gather(
             asyncio.to_thread(self._retrieve_kb, user_input),
@@ -965,11 +1302,12 @@ class ConsultationSession:
         if kb_reference:
             enriched += f"\n\n【知识库参考信息】\n{kb_reference}\n请参考以上医学知识回答，但不要直接引用知识库原文。"
 
+        # 问答分支同样需要:避免回答时把已采集的姓名/年龄/主诉再问一遍
+        hint = self._no_repeat_hint()
+        if hint:
+            enriched += f"\n\n{hint}"
+
         prefix = (emergency_msg + "\n\n") if emergency_msg else ""
-        # 与问诊主链路一致:追加简洁性约束以压缩输出 token(本机约 16 tokens/s)
-        qa_system = DIRECT_QA_SYSTEM
-        if config.CONSULT_BRIEF_OUTPUT and config.DIRECT_QA_BRIEF_HINT:
-            qa_system = f"{DIRECT_QA_SYSTEM}\n{config.DIRECT_QA_BRIEF_HINT}"
         streamed = []
         first = True
         # 流式过滤器：剥离末尾 JSON 结构块，只透出可见正文
@@ -979,7 +1317,7 @@ class ConsultationSession:
         async for raw in llm_client.chat_stream(
             system_prompt=qa_system,
             user_prompt=enriched,
-            history=self.conversation_history[-6:],
+            history=self.history_window(),
             model=config.CONSULT_MODEL_NAME,
             max_tokens=config.CONSULT_MAX_TOKENS,
             return_raw=True,
@@ -1009,17 +1347,8 @@ class ConsultationSession:
             yield {"event": "reply", "data": tail}
 
         reply_text = "".join(streamed)
-        # 问答轮次同样计入阶段推进兜底计数:否则用户连续提问会让 _stage_turns
-        # 永不增长、stage 永久卡住、报告永不触发(实测高频停滞场景)。
-        # QA 分支不做字段抽取(零成本),推进依赖已有字段齐全或 STAGE_MAX_TURNS 超时。
-        if self._fallback_stage_advance():
-            reply_text += self._finalize_stage_advance()
-            # 推进到终末阶段:立即触发后台报告生成
-            self.maybe_start_report_task()
-        # 记录到对话历史（含紧急前缀），保持上下文连贯
-        self.conversation_history.append({"role": "assistant", "content": reply_text})
-        # 写入跨会话长记忆(后台线程,失败不影响主流程)
-        await asyncio.to_thread(self._remember_turn, user_input, reply_text)
+        # 收尾:阶段兜底推进 → 历史追加 → 长记忆写入(与 ReAct 分支同一实现)
+        reply_text = self._finalize_direct_qa(user_input, reply_text)
         # 直接问答不改变采集阶段
         yield {
             "event": "end",
@@ -1108,6 +1437,10 @@ class ConsultationSession:
                 f"\n\n【知识库参考信息】\n{kb_reference}\n"
                 "请参考以上医学知识辅助问诊，但不要直接向患者引用知识库原文。"
             )
+        # 同非流式分支:紧凑的「已收集项不得重复询问」提示,贴在最靠近生成起点的位置
+        hint = self._no_repeat_hint()
+        if hint:
+            enriched_input += f"\n\n{hint}"
         # 多轮后模型会逐渐不再输出 JSON(历史里它看到的自己的回复都被剥离了 JSON,
         # 于是模仿自身历史而省略结构化数据)。把格式要求再压到用户消息末尾通常
         # 比 system 提示更被遵守,用于稳定抽取率 —— 否则 present_illness 等字段
@@ -1128,7 +1461,7 @@ class ConsultationSession:
         async for raw in llm_client.chat_stream(
             system_prompt=system_prompt,
             user_prompt=enriched_input,
-            history=self.conversation_history[-6:],
+            history=self.history_window(),
             model=config.CONSULT_MODEL_NAME,
             max_tokens=config.CONSULT_MAX_TOKENS,
             return_raw=True,
@@ -1160,22 +1493,15 @@ class ConsultationSession:
         # 5. 更新患者信息
         #    包裹异常：字段结构异常不得中断本轮后续处理(阶段推进/历史追加/会话落库)，
         #    否则会出现"回答正常但 stage 卡死、报告永不出炉"的隐性故障。
-        if extracted_info:
-            try:
-                self._update_patient_info(extracted_info)
-            except Exception as e:
-                logger.warning(f"更新患者信息失败(已忽略,不影响阶段推进): {e}")
+        #    同非流式分支:不能只在 extracted_info 非空时调用,否则模型漏输出 JSON
+        #    那一轮的用户陈述无法通过兜底提取补回(本轮信息永久丢失)。
+        try:
+            self._update_patient_info(extracted_info, user_input)
+        except Exception as e:
+            logger.warning(f"更新患者信息失败(已忽略,不影响阶段推进): {e}")
 
-        # 6. 处理阶段转换
-        if extracted_info and self._as_bool(extracted_info.get("stage_complete")):
-            next_stage = self._normalize_stage(extracted_info.get("next_stage"), self.stage + 1)
-            if next_stage > self.stage:
-                self.stage = min(next_stage, ConsultationState.STAGE_COMPLETE)
-                self._stage_turns = 0
-                logger.info(f"阶段转换: -> {self.stage}")
-                display_text += self._finalize_stage_advance()
-        elif self._fallback_stage_advance():
-            display_text += self._finalize_stage_advance()
+        # 6. 处理阶段转换(含过早完结拦截:数据未齐或本轮仍在提问时不进 STAGE_COMPLETE)
+        display_text += self._apply_stage_transition(extracted_info, display_text)
 
         # 7. 阶段1收集到姓名后查询历史记录
         if self.stage == ConsultationState.STAGE_BASIC_INFO and self.patient_name and self.history_data is None:
@@ -1254,6 +1580,15 @@ class ConsultationSession:
         context_parts = []
 
         context_parts.append(f"【当前问诊阶段: {self.stage}】")
+
+        # 登录资料预填项:明确告知模型这些项已由用户提供,不得重复询问
+        if self.profile_prefilled:
+            context_parts.append(
+                "【用户登录资料】以下基本信息来自用户注册时填写的资料:"
+                + ("性别" if self.patient_gender else "")
+                + ("、年龄" if self.patient_age else "")
+                + "已带入本次问诊，除非患者本人明确更正，否则不要再询问这些内容。"
+            )
 
         if self.patient_name:
             context_parts.append(f"已收集 - 姓名: {self.patient_name}")

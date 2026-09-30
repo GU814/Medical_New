@@ -10,12 +10,13 @@ import {
   getLatestSession,
   getSessionHistory,
   getSessionReport,
+  getSessionSteps,
   listSessions,
   retryReport,
 } from '@/services/medical';
 import { recognizeSpeech, recognizeImage } from '@/services/multimodal';
 import { STORAGE_KEYS } from '@/config';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ReactStep } from '@/types';
 import styles from './index.module.scss';
 
 const WELCOME_MESSAGE: ChatMessage = {
@@ -41,6 +42,8 @@ function ConsultPage() {
   // 多模态交互态:录音中 / 上传识别中
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // 整个会话一条推理步骤都没有时的原因(历史会话早于上线 / 当时未启用),由后端给出
+  const [stepsNotice, setStepsNotice] = useState<string | null>(null);
 
   const abortRef = useRef<{ abort: () => void } | null>(null);
   // 用 ref 保存最新会话/发送态,供录音回调(挂载时注册一次)安全读取
@@ -217,11 +220,67 @@ function ConsultPage() {
     }
   };
 
+  /**
+   * 把后端推理步骤回填到历史气泡上(历史回放的核心)。
+   *
+   * 后端 session_steps 以 (session_id, turn_index) 定位,turn_index = 该轮开始前
+   * conversation_history 长度 // 2;而历史 items 是扁平按序返回的第 idx 条,
+   * 因此第 idx 条助手回复对应 turn_index = idx // 2。
+   *
+   * 兜底策略(不允许出现「暂无推理过程」空态):
+   * - 有步骤 -> 按 seq 排序后挂到对应气泡,完整回放;
+   * - 部分轮次缺失 -> 在该轮气泡上写明「第 N 轮未记录」的原因;
+   * - 整条会话都没有 -> 用后端 missing_reason(上线前旧会话 / 当时未启用)统一提示。
+   */
+  const attachStepsToHistory = async (
+    sid: string,
+    messages: ChatMessage[]
+  ): Promise<ChatMessage[]> => {
+    if (!sid) return messages;
+    try {
+      const data = await getSessionSteps(sid);
+      const byTurn = new Map<number, ReactStep[]>();
+      for (const t of data.turns || []) {
+        const steps = [...(t.steps || [])].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+        if (steps.length > 0) byTurn.set(t.turn_index, steps);
+      }
+
+      let matched = 0;
+      const next = messages.map((m, idx) => {
+        if (m.role !== 'assistant') return m;
+        const steps = byTurn.get(Math.floor(idx / 2));
+        if (steps && steps.length > 0) {
+          matched += 1;
+          return { ...m, steps, stepsMissingReason: undefined };
+        }
+        // 该轮没有步骤:给出明确原因,而不是什么都不显示
+        if (byTurn.size > 0) {
+          return {
+            ...m,
+            stepsMissingReason: `第 ${Math.floor(idx / 2) + 1} 轮问答未记录推理过程,可能当时未命中直接问答分支,或该轮产生于「推理过程」功能上线前。`,
+          };
+        }
+        return m;
+      });
+
+      if (matched === 0 && data.missing_reason) {
+        setStepsNotice(data.missing_reason);
+      } else {
+        setStepsNotice(null);
+      }
+      return next;
+    } catch {
+      // 步骤接口异常绝不能影响历史消息的正常展示
+      return messages;
+    }
+  };
+
   const loadHistory = async (sid: string): Promise<boolean> => {
     try {
       const { items } = await getSessionHistory(sid, 0, 50);
       if (!items || items.length === 0) {
         setMessages([WELCOME_MESSAGE]);
+        setStepsNotice(null);
         return false;
       }
       const history: ChatMessage[] = items.map((item, idx) => ({
@@ -231,12 +290,14 @@ function ConsultPage() {
         isReport: item.role === 'assistant' && item.content.includes('## '),
         imageUrl: (item as { image_url?: string }).image_url,
       }));
-      setMessages(history);
+      const withSteps = await attachStepsToHistory(sid, history);
+      setMessages(withSteps);
       setTimeout(scrollToBottom, 100);
-      return history.some((m) => m.isReport);
+      return withSteps.some((m) => m.isReport);
     } catch (err) {
       console.error('[Consult] 加载历史失败', err);
       setMessages([WELCOME_MESSAGE]);
+      setStepsNotice(null);
       return false;
     }
   };
@@ -329,8 +390,10 @@ function ConsultPage() {
 
     setMessages((prev) => [
       ...prev,
-      { id: typingId, role: 'assistant', content: '', streaming: true },
+      { id: typingId, role: 'assistant', content: '', streaming: true, steps: [] },
     ]);
+    // 新开一轮:先清掉上一会话残留的缺失提示
+    setStepsNotice(null);
     scrollToBottom();
 
     abortRef.current?.abort();
@@ -357,6 +420,30 @@ function ConsultPage() {
               )
             );
             break;
+          case 'step':
+            // ReAct 推理过程增量:按 seq 去重排序后累积到当前气泡
+            try {
+              const step = JSON.parse(ev.data) as ReactStep;
+              if (step && typeof step.seq === 'number') {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === typingId
+                      ? {
+                          ...m,
+                          steps: [
+                            ...(m.steps || []).filter((s) => s.seq !== step.seq),
+                            step,
+                          ].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0)),
+                        }
+                      : m
+                  )
+                );
+                scrollToBottom();
+              }
+            } catch {
+              /* 非 JSON 负载忽略,不影响正文 */
+            }
+            break;
           case 'report':
             setMessages((prev) =>
               prev.map((m) =>
@@ -382,7 +469,16 @@ function ConsultPage() {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === typingId
-                    ? { ...m, content: finalText ?? m.content, streaming: false }
+                    ? {
+                        ...m,
+                        content: finalText ?? m.content,
+                        streaming: false,
+                        // 本轮没有推理步骤时说明原因,而不是留下「暂无推理过程」空态
+                        stepsMissingReason:
+                          endData.react_enabled === false
+                            ? '当前服务未启用推理过程记录(ENABLE_REACT=false),本轮不展示推理步骤。'
+                            : m.stepsMissingReason,
+                      }
                     : m
                 )
               );
@@ -584,6 +680,13 @@ function ConsultPage() {
         showScrollbar={false}
       >
         <View className={styles.scrollInner}>
+          {/* 整条会话都没有推理步骤时,在会话顶部用后端给的原因统一说明 */}
+          {stepsNotice ? (
+            <View className={styles.stepsNotice}>
+              <Text className={styles.stepsNoticeIcon}>🧠</Text>
+              <Text className={styles.stepsNoticeText}>{stepsNotice}</Text>
+            </View>
+          ) : null}
           {loading ? (
             <View className={styles.emptyState}>
               <Text className={styles.emptyIcon}>⏳</Text>
@@ -607,6 +710,8 @@ function ConsultPage() {
                 imageUrl={msg.imageUrl}
                 fromMultimodal={msg.fromMultimodal}
                 thinking={msg.thinking}
+                steps={msg.steps}
+                stepsMissingReason={msg.stepsMissingReason}
               />
             ))
           )}

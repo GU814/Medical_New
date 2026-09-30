@@ -85,6 +85,31 @@
   margin-bottom: $spacing-xs;
 }
 
+// ==================== 推理过程缺失说明 ====================
+.missingReason {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  margin-bottom: $spacing-sm;
+  padding: $spacing-xs $spacing-md;
+  background: rgba(255, 125, 0, 0.06);
+  border-left: 4rpx solid rgba(255, 125, 0, 0.45);
+  border-radius: $radius-sm;
+}
+
+.missingReasonIcon {
+  font-size: $font-size-sm;
+  margin-right: $spacing-xs;
+}
+
+.missingReasonText {
+  flex: 1;
+  font-size: $font-size-xs;
+  line-height: $line-height-normal;
+  color: $color-text-secondary;
+  word-break: break-word;
+}
+
 // ==================== 思考过程(思维链) ====================
 .thinkingBlock {
   margin-bottom: $spacing-sm;
