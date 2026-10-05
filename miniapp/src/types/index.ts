@@ -151,6 +151,23 @@ export interface UserLocation {
   created_at: string;
 }
 
+// ==================== 家庭成员 ====================
+export interface FamilyMember {
+  id: number;
+  member_name: string;
+  relationship?: string;
+  gender?: string;
+  birth_date?: string;
+  phone?: string;
+  can_view_status: boolean;
+  emergency_contact: boolean;
+  notify_on_emergency: boolean;
+  address_shared: boolean;
+  invite_status: 'pending' | 'bound';
+  invite_token?: string;
+  created_at?: string;
+}
+
 // ==================== 小程序码 ====================
 export interface WxacodeResult {
   image_base64?: string;

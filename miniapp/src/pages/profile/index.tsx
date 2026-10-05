@@ -10,12 +10,18 @@ import styles from './index.module.scss';
 /**
  * 个人中心页
  * - 展示账户资料与认证状态
- * - 支持昵称编辑
+ * - 支持昵称 / 性别 / 年龄 编辑(性别、年龄来自注册时填写,此处可查看并修改)
  * - 提供隐私入口与登出
+ *
+ * 缺陷修复:此前仅展示与编辑「昵称」,登录时填写的性别/年龄在个人页完全不可见,
+ * 导致用户以为「没数据、要重新填」。现补齐性别/年龄的展示与编辑,且直接复用
+ * 后端已返回并持久化的 gender/age 字段(见 auth_service.get_profile / update_profile)。
  */
 function ProfilePage() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [nickEdit, setNickEdit] = useState('');
+  const [genderEdit, setGenderEdit] = useState('');
+  const [ageEdit, setAgeEdit] = useState('');
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -30,7 +36,7 @@ function ProfilePage() {
     setLoadError('');
     try {
       const cached = Taro.getStorageSync(STORAGE_KEYS.USER) as UserProfile;
-      if (cached) setUser(cached);
+      if (cached) syncEditFields(cached);
       const profile = await getProfile();
       // 后端异常时可能返回空对象,按无数据处理并提示,避免页面空白
       if (!profile || typeof profile !== 'object' || !profile.user_id) {
@@ -38,7 +44,7 @@ function ProfilePage() {
         return;
       }
       setUser(profile);
-      setNickEdit(profile.nickname || '');
+      syncEditFields(profile);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '获取资料失败';
       console.error('[Profile] 获取资料失败', err);
@@ -48,24 +54,36 @@ function ProfilePage() {
     }
   };
 
+  // 把后端资料同步进可编辑表单(进入编辑态或初次加载时都调用,避免读到旧值)
+  const syncEditFields = (p: UserProfile) => {
+    setNickEdit(p.nickname || '');
+    setGenderEdit(p.gender || '');
+    setAgeEdit(p.age != null ? String(p.age) : '');
+  };
+
   useDidShow(() => {
     loadUser();
   });
 
+  const startEdit = () => {
+    if (user) syncEditFields(user);
+    setEditing(true);
+  };
+
   const handleSave = async () => {
-    const name = nickEdit.trim();
-    if (!name) {
-      Taro.showToast({ title: '昵称不能为空', icon: 'none' });
-      return;
-    }
-    if (name === user?.nickname) {
-      setEditing(false);
-      return;
-    }
     setSaving(true);
     try {
-      await updateProfile({ nickname: name });
-      const updated = { ...(user as UserProfile), nickname: name };
+      // 仅携带被允许编辑的字段;任一为空则不改动该项,避免误清空。
+      const payload: Partial<UserProfile> = {};
+      const name = nickEdit.trim();
+      if (name) payload.nickname = name;
+      if (genderEdit) payload.gender = genderEdit;
+      if (ageEdit.trim()) {
+        const a = parseInt(ageEdit, 10);
+        if (!Number.isNaN(a) && a > 0 && a < 150) payload.age = a;
+      }
+      await updateProfile(payload);
+      const updated: UserProfile = { ...(user as UserProfile), ...payload };
       setUser(updated);
       Taro.setStorageSync(STORAGE_KEYS.USER, updated);
       setEditing(false);
@@ -135,7 +153,10 @@ function ProfilePage() {
         <View className={styles.userInfo}>
           <Text className={styles.userName}>{user?.nickname || '未设置昵称'}</Text>
           <Text className={styles.userMeta}>
-            ID:{user?.openid_masked || '-'} · 注册于 {formatDate(user?.created_at)}
+            {[user?.gender, user?.age != null ? `${user.age}岁` : '']
+              .filter(Boolean)
+              .join(' · ') || '未填写性别/年龄'}
+            {'  ·  '}ID:{user?.openid_masked || '-'}
           </Text>
           <View className={styles.authRow}>
             <Text className={styles.authTag}>✓ 已认证</Text>
@@ -148,7 +169,16 @@ function ProfilePage() {
 
       {/* 资料编辑 */}
       <View className={styles.card}>
-        <Text className={styles.cardTitle}>账户资料</Text>
+        <View className={styles.cardHead}>
+          <Text className={styles.cardTitle}>账户资料</Text>
+          {!editing && user && (
+            <Text className={styles.editLink} onClick={startEdit}>
+              编辑
+            </Text>
+          )}
+        </View>
+
+        {/* 昵称 */}
         <View className={styles.row}>
           <Text className={styles.rowLabel}>昵称</Text>
           {editing ? (
@@ -158,20 +188,55 @@ function ProfilePage() {
               onInput={(e) => setNickEdit(e.detail.value)}
               maxlength={20}
               placeholder="请输入昵称"
-              focus
+              focus={false}
             />
           ) : (
-            <Text
-              className={styles.rowValue}
-              onClick={() => {
-                setNickEdit(user?.nickname || '');
-                setEditing(true);
-              }}
-            >
-              {user?.nickname || '点击设置'} ›
+            <Text className={styles.rowValue}>{user?.nickname || '点击编辑'} ›</Text>
+          )}
+        </View>
+
+        {/* 性别 */}
+        <View className={styles.row}>
+          <Text className={styles.rowLabel}>性别</Text>
+          {editing ? (
+            <View className={styles.genderOpts}>
+              {['男', '女', '其他'].map((g) => (
+                <Text
+                  key={g}
+                  className={
+                    genderEdit === g ? styles.genderOn : styles.genderOff
+                  }
+                  onClick={() => setGenderEdit(g)}
+                >
+                  {g}
+                </Text>
+              ))}
+            </View>
+          ) : (
+            <Text className={styles.rowValue}>{user?.gender || '点击编辑'} ›</Text>
+          )}
+        </View>
+
+        {/* 年龄 */}
+        <View className={styles.row}>
+          <Text className={styles.rowLabel}>年龄</Text>
+          {editing ? (
+            <Input
+              className={styles.nickInput}
+              type="number"
+              value={ageEdit}
+              onInput={(e) => setAgeEdit(e.detail.value)}
+              maxlength={3}
+              placeholder="请输入年龄"
+            />
+          ) : (
+            <Text className={styles.rowValue}>
+              {user?.age != null ? `${user.age} 岁` : '点击编辑'} ›
             </Text>
           )}
         </View>
+
+        {/* 只读身份字段 */}
         <View className={styles.row}>
           <Text className={styles.rowLabel}>用户 ID</Text>
           <Text className={styles.rowValue}>{user?.user_id ?? '-'}</Text>
@@ -187,7 +252,7 @@ function ProfilePage() {
             disabled={saving}
             onClick={handleSave}
           >
-            {saving ? '保存中…' : '保存昵称'}
+            {saving ? '保存中…' : '保存'}
           </Button>
         )}
       </View>

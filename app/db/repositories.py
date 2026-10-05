@@ -426,3 +426,139 @@ def mark_reminder_failed(reminder_id: int, reason: str):
             "UPDATE reminders SET status='failed', fail_reason=? WHERE id=?", (reason, reminder_id)
         )
         conn.commit()
+
+
+# ==================== family_members(家庭成员) ====================
+# 业务字段由迁移 v9 补充:member_openid / member_user_id / phone / can_view_status /
+# emergency_contact / notify_on_emergency / address_shared / invite_token /
+# invite_status / bound_at / updated_at。
+
+def add_family_member(user_id: int, member_name: str, relationship: str = None,
+                      gender: str = None, birth_date: str = None, phone: str = None,
+                      member_openid: str = None, member_user_id: int = None,
+                      can_view_status: bool = True, emergency_contact: bool = False,
+                      notify_on_emergency: bool = True, address_shared: bool = True,
+                      invite_token: str = None, invite_status: str = "pending") -> int:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO family_members("
+            "user_id, member_name, relationship, gender, birth_date, phone, "
+            "member_openid, member_user_id, can_view_status, emergency_contact, "
+            "notify_on_emergency, address_shared, invite_token, invite_status, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id, member_name, relationship, gender, birth_date, phone,
+                member_openid, member_user_id,
+                1 if can_view_status else 0,
+                1 if emergency_contact else 0,
+                1 if notify_on_emergency else 0,
+                1 if address_shared else 0,
+                invite_token, invite_status, now, now,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_family_members(user_id: int) -> list:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM family_members WHERE user_id=? ORDER BY emergency_contact DESC, created_at ASC",
+            (user_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_family_member(member_id: int, user_id: int) -> Optional[dict]:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM family_members WHERE id=? AND user_id=?", (member_id, user_id)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_family_member_by_token(token: str) -> Optional[dict]:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM family_members WHERE invite_token=?", (token,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_family_member(member_id: int, user_id: int, **fields) -> bool:
+    allowed = {
+        "member_name", "relationship", "gender", "birth_date", "phone",
+        "member_openid", "member_user_id", "can_view_status", "emergency_contact",
+        "notify_on_emergency", "address_shared", "invite_status",
+    }
+    sets, params = [], []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        if k in ("can_view_status", "emergency_contact", "notify_on_emergency", "address_shared"):
+            v = 1 if v else 0
+        sets.append(f"{k}=?")
+        params.append(v)
+    if not sets:
+        return False
+    params.append(member_id)
+    params.append(user_id)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE family_members SET {', '.join(sets)}, updated_at=? "
+            f"WHERE id=? AND user_id=?",
+            [now, *params],
+        )
+        conn.commit()
+    return True
+
+
+def bind_family_member(token: str, member_openid: str, member_user_id: int = None) -> Optional[dict]:
+    """家庭成员接受邀请:把其微信号/账号绑定到邀请记录,状态置为 bound。"""
+    member = get_family_member_by_token(token)
+    if not member:
+        return None
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE family_members SET member_openid=?, member_user_id=?, "
+            "invite_status='bound', bound_at=?, updated_at=? WHERE invite_token=?",
+            (member_openid, member_user_id, now, now, token),
+        )
+        conn.commit()
+    return get_family_member_by_token(token)
+
+
+def delete_family_member(member_id: int, user_id: int):
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM family_members WHERE id=? AND user_id=?", (member_id, user_id)
+        )
+        conn.commit()
+
+
+def list_emergency_contacts(user_id: int) -> list:
+    """该用户勾选「重大情况推送」的家庭成员(推送目标)。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM family_members WHERE user_id=? AND notify_on_emergency=1",
+            (user_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_latest_record(user_id: int) -> Optional[dict]:
+    """用户最近一条就诊记录(供家庭成员查看用户状态)。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT visit_date, chief_complaint_preview, diagnosis, full_report, created_at "
+            "FROM patients_info WHERE user_id=? ORDER BY created_at DESC LIMIT 1",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None

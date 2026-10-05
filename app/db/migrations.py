@@ -453,6 +453,33 @@ def migrate_v8(conn: sqlite3.Connection):
     conn.commit()
 
 
+def migrate_v9(conn: sqlite3.Connection):
+    """家庭成员功能落地:在 v3 的 family_members 骨架上补齐业务字段。
+
+    v3 仅建了 姓名/关系/性别/生日 四列(空实现)。本迁移增量加列(幂等),
+    新增:微信号绑定、状态共享开关、紧急联系人/推送开关、邀请绑定流转、地址共享。
+    不改动既有列,旧数据(若有)保持兼容。
+    """
+    new_cols = [
+        ("member_openid", "TEXT"),          # 家庭成员微信号(openid),紧急推送目标
+        ("member_user_id", "INTEGER"),       # 若该成员也是本 App 用户,关联其 user_id
+        ("phone", "TEXT"),                  # 联系电话(展示/备用)
+        ("can_view_status", "INTEGER NOT NULL DEFAULT 1"),   # 可否查看用户状态
+        ("emergency_contact", "INTEGER NOT NULL DEFAULT 0"), # 是否紧急联系人
+        ("notify_on_emergency", "INTEGER NOT NULL DEFAULT 1"),  # 重大情况是否推送
+        ("address_shared", "INTEGER NOT NULL DEFAULT 1"),      # 推送时是否附带用户地址
+        ("invite_token", "TEXT"),           # 绑定邀请令牌
+        ("invite_status", "TEXT NOT NULL DEFAULT 'pending'"),  # pending(待绑定)/bound(已绑定)
+        ("bound_at", "TEXT"),               # 绑定完成时间
+        ("updated_at", "TEXT"),             # 最后更新时间
+    ]
+    for col, dtype in new_cols:
+        if not _column_exists(conn, "family_members", col):
+            conn.execute(f"ALTER TABLE family_members ADD COLUMN {col} {dtype}")
+            logger.info(f"family_members 已增加列 {col}")
+    conn.commit()
+
+
 # 迁移注册表:(version, function)
 _MIGRATIONS = [
     (1, migrate_v1),
@@ -463,6 +490,7 @@ _MIGRATIONS = [
     (6, migrate_v6),
     (7, migrate_v7),
     (8, migrate_v8),
+    (9, migrate_v9),
 ]
 
 

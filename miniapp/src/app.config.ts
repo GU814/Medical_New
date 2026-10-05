@@ -9,6 +9,7 @@ export default defineAppConfig({
     'pages/privacy/index',
     'pages/location/index',
     'pages/share/index',
+    'pages/family/index',
   ],
   // 使用位置相关接口需声明(隐私合规)
   requiredPrivateInfos: ['getLocation', 'chooseLocation', 'onLocationChange'],

@@ -60,6 +60,7 @@ function HomePage() {
   const goRecords = () => Taro.switchTab({ url: '/pages/records/index' })
   const goProfile = () => Taro.switchTab({ url: '/pages/profile/index' })
   const goPrivacy = () => Taro.navigateTo({ url: '/pages/privacy/index' })
+  const goFamily = () => Taro.navigateTo({ url: '/pages/family/index' })
 
   const gridItems: GridItem[] = [
     {
@@ -86,10 +87,9 @@ function HomePage() {
     {
       icon: '👨‍👩‍👧',
       title: '家庭成员',
-      desc: '多人管理(开发中)',
+      desc: '多人管理与紧急守护',
       bg: 'rgba(0, 180, 42, 0.1)',
-      action: () =>
-        Taro.showToast({ title: '功能开发中', icon: 'none' }),
+      action: goFamily,
     },
   ]
 

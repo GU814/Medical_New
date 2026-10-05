@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 from typing import Optional
 
 import config
@@ -464,6 +465,34 @@ class ConsultationSession:
                 )
         return None
 
+    async def _notify_family_emergency(self, emergency_text: str):
+        """(协程)触发家庭成员紧急推送,异常隔离,不污染问诊主流程。"""
+        try:
+            from app.services import family_service
+            await family_service.notify_emergency(self.user_id, emergency_text)
+        except Exception as e:  # 推送失败绝不能影响问诊回复
+            logger.error(f"[family] 紧急推送失败: {e}")
+
+    def _fire_family_emergency(self, emergency_text: str):
+        """
+        非阻塞地触发家庭成员紧急推送。
+        在异步上下文(流式问诊)用 create_task;在纯同步上下文(遗留桌面分支)
+        起守护线程跑独立事件循环,均不阻塞问诊回复。
+        """
+        if self.user_id in (0, None):
+            return  # 未鉴权 / 桌面模式(无归属用户)不推送
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(self._notify_family_emergency(emergency_text))
+                return
+        except RuntimeError:
+            pass
+        threading.Thread(
+            target=lambda: asyncio.run(self._notify_family_emergency(emergency_text)),
+            daemon=True,
+        ).start()
+
     def _parse_llm_response(self, raw_response: str) -> tuple:
         """
         从LLM回复中分离出：对话文本 和 结构化JSON数据
@@ -664,12 +693,19 @@ class ConsultationSession:
         """
         是否具备生成报告所需的最低数据条件。
 
-        修复「问诊没问完就出报告」:进入 STAGE_COMPLETE 前必须已收齐
-        姓名/性别/年龄/主诉/现病史/系统回顾 —— 这几项缺失时报告只会是残缺的。
+        核心四要素:姓名 / 性别 / 年龄 / 主诉 / 现病史 —— 这几项是医学报告必需的,
+        缺失时报告必然是残缺的,必须收齐。
+
+        2026-10-05 修复(缺陷2·报告不自动生成):
+        原实现强制要求「系统回顾(system_review)」,但第4阶段系统回顾在实测中
+        常常未被收集(qwen2.5:7b 容易跳过或用户未提供),导致 is_complete 几乎
+        永不为真 → maybe_start_report_task() 永不触发 → 报告只能靠用户手动说
+        「帮我生成报告」。系统回顾属于「锦上添花」而非报告必需项,故从硬性门槛中
+        移除;保留现病史为必需,避免拿到主诉就草草出报告的另一种极端。
         """
         return bool(
             self.patient_name and self.patient_gender and self.patient_age
-            and self.chief_complaint and self.present_illness and self.system_review
+            and self.chief_complaint and self.present_illness
         )
 
     def _reply_asks_question(self, display_text: str) -> bool:
@@ -958,6 +994,7 @@ class ConsultationSession:
         emergency_msg = self._check_emergency(user_input)
         if emergency_msg:
             self.conversation_history.append({"role": "user", "content": user_input})
+            self._fire_family_emergency(emergency_msg)
 
         # 2. 如果是首次对话，标记已打招呼
         if not self._greeted:
@@ -1017,6 +1054,9 @@ class ConsultationSession:
 
         # 8. 处理阶段转换(终端/桌面共用 _apply_stage_transition,含过早完结拦截)
         display_text += self._apply_stage_transition(extracted_info, display_text)
+
+        # 8.5 确定性兜底:剔除针对已收集项的纯重复提问(与流式分支一致)
+        display_text = self._suppress_repeat_question(display_text)
 
         # 9. 在阶段1收集到姓名后查询历史记录
         if self.stage == ConsultationState.STAGE_BASIC_INFO and self.patient_name and self.history_data is None:
@@ -1379,6 +1419,8 @@ class ConsultationSession:
 
         # 1. 紧急症状检查（纯本地关键词匹配，无需 LLM）
         emergency_msg = self._check_emergency(user_input)
+        if emergency_msg:
+            self._fire_family_emergency(emergency_msg)
         if not self._greeted:
             self._greeted = True
         if not emergency_msg:
@@ -1503,6 +1545,9 @@ class ConsultationSession:
         # 6. 处理阶段转换(含过早完结拦截:数据未齐或本轮仍在提问时不进 STAGE_COMPLETE)
         display_text += self._apply_stage_transition(extracted_info, display_text)
 
+        # 6.5 确定性兜底:剔除针对已收集项的纯重复提问(缓解「重复问已答过的问题」)
+        display_text = self._suppress_repeat_question(display_text)
+
         # 7. 阶段1收集到姓名后查询历史记录
         if self.stage == ConsultationState.STAGE_BASIC_INFO and self.patient_name and self.history_data is None:
             self._query_patient_history(self.patient_name)
@@ -1617,7 +1662,122 @@ class ConsultationSession:
                 f"诊断: {last_visit.get('diagnosis', '')}"
             )
 
+        # 给出当前阶段「尚未收集」的明确目标,从根源减少重复询问:
+        # 模型有了具体目标,就不会凭空再问一遍已收集项。
+        pending = self._pending_hint()
+        if pending:
+            context_parts.append(pending)
+
         return "\n".join(context_parts)
+
+    # 字段 <-> 关键词映射,用于识别「针对已收集项的重复提问」
+    _REASK_FIELD_KEYWORDS = {
+        "patient_name": ["姓名", "叫什么", "怎么称呼", "尊姓", "名字"],
+        "patient_gender": ["性别", "男还是女", "是男是女", "男女"],
+        "patient_age": ["年龄", "多大", "几岁", "年纪", "贵庚", "岁数"],
+        "chief_complaint": ["主诉", "哪里不舒服", "怎么了", "什么症状",
+                            "来看什么", "什么问题", "不舒服"],
+        "present_illness": ["现病史", "什么时候开始", "持续多久", "诱因",
+                            "伴随症状", "缓解"],
+        "past_history": ["既往史", "手术史", "过敏史", "慢性病", "以前得"],
+        "personal_history": ["个人史", "吸烟", "喝酒", "职业"],
+        "family_history": ["家族史", "家族中"],
+        "system_review": ["系统回顾", "各个系统"],
+    }
+    # 提问句中常见修饰/礼貌套话,判定「纯重复提问」时从残留中剔除
+    _REASK_FILLER = [
+        "请问", "您", "你", "的", "是", "多少", "呢", "麻烦", "可以告诉我",
+        "能说一下", "方便告知", "吗", "呀", "啊", "再", "一下", "大概",
+        "左右", "具体", "能", "说说", "告诉", "我", "我们", "关于", "方面",
+    ]
+
+    def _pending_hint(self) -> str:
+        """列出当前阶段「尚未收集」的要点,给模型一个明确提问目标。
+
+        配合 _no_repeat_hint(已收集项严禁重复)使用:一面封死已问过的,
+        一面指明还没问的,双管齐下缓解 qwen2.5:7b 偶发的「重复问已答过的问题」。
+        """
+        if not getattr(config, "CONSULT_PENDING_HINT", True):
+            return ""
+        stage = self.stage
+        need: list = []
+        if stage == ConsultationState.STAGE_BASIC_INFO:
+            if not self.patient_name:
+                need.append("姓名")
+            if not self.patient_gender:
+                need.append("性别")
+            if not self.patient_age:
+                need.append("年龄")
+            if not self.chief_complaint:
+                need.append("初步主诉")
+        elif stage == ConsultationState.STAGE_CHIEF_COMPLAINT:
+            if not self.chief_complaint:
+                need.append("主诉")
+            if not self.present_illness:
+                need.append("现病史(部位/性质/时长/诱因/伴随)")
+        elif stage == ConsultationState.STAGE_HISTORY:
+            if not (self.past_history or self.personal_history or self.family_history):
+                need.append("相关既往史/个人史/家族史(与主诉相关的即可)")
+        elif stage == ConsultationState.STAGE_REVIEW:
+            if not self.system_review:
+                need.append("系统回顾(2-3 个相关系统)")
+        else:
+            return ""
+        if not need:
+            return ("【本轮目标】当前阶段信息已基本收集,请直接给出 stage_complete=true "
+                    "进入下一阶段,不要重复询问已收集项。")
+        return ("【本轮待了解】" + "、".join(need)
+                + "。请只针对以上待了解项提问,已收集项严禁重复询问或换种说法再问。")
+
+    def _suppress_repeat_question(self, display_text: str) -> str:
+        """确定性兜底:剔除回复里针对「已收集项」的纯重复提问句。
+
+        为什么:即使有 _no_repeat_hint / _pending_hint,qwen2.5:7b 仍偶发把已答过的
+        问题换个说法再问一遍,患者体验极差。这里不依赖模型,直接把「纯重复提问」
+        那一句删掉(连同标点)。
+
+        判定很保守:仅当某问句在剔除字段关键词与礼貌套话后几乎不剩内容(<=2 字),
+        且对应字段确已收集,才视为纯重复提问。任何包含实质新信息的问句
+        (如「症状什么时候开始的」)都保留,绝不误删。
+        """
+        if not getattr(config, "CONSULT_DEDUPE_QUESTION", True):
+            return display_text
+        if not display_text:
+            return display_text
+        parts = re.split(r'([。！？!?])', display_text)
+        sentences: list = []
+        for k in range(0, len(parts), 2):
+            seg = parts[k]
+            sep = parts[k + 1] if k + 1 < len(parts) else ""
+            sentences.append((seg, sep))
+        out: list = []
+        for seg, sep in sentences:
+            is_question = sep in ("？", "?", "！", "!")
+            if "？" in seg or "?" in seg:
+                is_question = True
+            if is_question:
+                hit_field = None
+                for field, kws in self._REASK_FIELD_KEYWORDS.items():
+                    if any(kw in seg for kw in kws) and getattr(self, field, None):
+                        hit_field = field
+                        break
+                if hit_field:
+                    leftover = seg
+                    for kw in self._REASK_FIELD_KEYWORDS[hit_field]:
+                        leftover = leftover.replace(kw, "")
+                    for f in self._REASK_FILLER:
+                        leftover = leftover.replace(f, "")
+                    leftover = re.sub(r"\s+", "", leftover)
+                    if len(leftover) <= 2:
+                        # 纯重复提问:丢弃该句
+                        logger.info(
+                            f"剔除针对已收集项({hit_field})的纯重复提问: {seg}{sep}"
+                        )
+                        continue
+            out.append(seg + sep)
+        result = "".join(out)
+        # 若整段都被剔除(整轮都在重复问),退回原文,避免空气泡
+        return result if result.strip() else display_text
 
     def get_patient_data(self) -> dict:
         """获取完整的患者数据字典"""

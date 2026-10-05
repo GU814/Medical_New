@@ -58,10 +58,37 @@ class LocationItem(BaseModel):
     id: int
     name: str
     address: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    is_default: bool = False
-    created_at: str
+
+
+# ==================== 家庭成员 ====================
+class FamilyMemberAdd(BaseModel):
+    member_name: str = Field(..., min_length=1, max_length=30, description="家庭成员称呼/姓名")
+    relationship: Optional[str] = Field(None, max_length=20, description="关系(父母/配偶/子女…)")
+    gender: Optional[str] = Field(None, max_length=10, description="性别")
+    birth_date: Optional[str] = Field(None, max_length=20, description="出生日期")
+    phone: Optional[str] = Field(None, max_length=20, description="联系电话")
+    emergency_contact: bool = False
+    notify_on_emergency: bool = True
+    address_shared: bool = True
+    can_view_status: bool = True
+
+
+class FamilyMemberUpdate(BaseModel):
+    member_name: Optional[str] = Field(None, max_length=30)
+    relationship: Optional[str] = Field(None, max_length=20)
+    gender: Optional[str] = Field(None, max_length=10)
+    birth_date: Optional[str] = Field(None, max_length=20)
+    phone: Optional[str] = Field(None, max_length=20)
+    emergency_contact: Optional[bool] = None
+    notify_on_emergency: Optional[bool] = None
+    address_shared: Optional[bool] = None
+    can_view_status: Optional[bool] = None
+
+
+class FamilyAcceptInvite(BaseModel):
+    token: str = Field(..., min_length=1, description="绑定邀请令牌")
+    member_openid: Optional[str] = Field(None, description="家庭成员微信号(openid);缺省取当前登录用户")
+    member_user_id: Optional[int] = Field(None, description="若成员也是本 App 用户,关联其 user_id;缺省取当前登录用户")
 
 
 # ==================== 订阅消息 ====================

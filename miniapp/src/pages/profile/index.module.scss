@@ -81,6 +81,59 @@
   margin-bottom: $spacing-md;
 }
 
+// 资料卡头部:标题 + 编辑入口
+.cardHead {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: $spacing-md;
+}
+
+.editLink {
+  font-size: $font-size-sm;
+  color: $color-primary;
+  padding: 4rpx $spacing-sm;
+
+  &:active {
+    opacity: 0.7;
+  }
+}
+
+// 性别选择(编辑态)
+.genderOpts {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.genderOff {
+  font-size: $font-size-sm;
+  color: $color-text-secondary;
+  border: 1rpx solid $color-divider;
+  border-radius: $radius-round;
+  padding: 6rpx $spacing-lg;
+  margin-left: $spacing-sm;
+
+  &:active {
+    opacity: 0.7;
+  }
+}
+
+.genderOn {
+  font-size: $font-size-sm;
+  color: $color-text-white;
+  background: $color-primary;
+  border: 1rpx solid $color-primary;
+  border-radius: $radius-round;
+  padding: 6rpx $spacing-lg;
+  margin-left: $spacing-sm;
+
+  &:active {
+    opacity: 0.85;
+  }
+}
+
 .row {
   display: flex;
   flex-direction: row;

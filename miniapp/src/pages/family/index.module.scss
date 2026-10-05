@@ -1,0 +1,252 @@
+.container {
+  min-height: 100vh;
+  background: #f7fafd;
+  padding: 24px 24px 60px;
+  box-sizing: border-box;
+}
+
+.title {
+  font-size: 36px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.headRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.addBtn {
+  font-size: 26px;
+  color: #fff;
+  background: #165dff;
+  border-radius: 999px;
+  padding: 0 28px;
+  height: 60px;
+  line-height: 60px;
+  margin: 0;
+}
+
+.hint {
+  font-size: 24px;
+  color: #86909c;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 80px 0;
+}
+
+.emptyText {
+  font-size: 30px;
+  color: #4e5969;
+  margin-bottom: 12px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 28px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.memberName {
+  font-size: 32px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.memberRel {
+  font-size: 24px;
+  color: #86909c;
+}
+
+.badgeOn,
+.badgeOff {
+  font-size: 22px;
+  padding: 4px 16px;
+  border-radius: 999px;
+}
+
+.badgeOn {
+  color: #00b42a;
+  background: rgba(0, 180, 42, 0.12);
+}
+
+.badgeOff {
+  color: #ff7d00;
+  background: rgba(255, 125, 0, 0.12);
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-top: 1px solid #f2f3f5;
+}
+
+.toggleLabel {
+  font-size: 28px;
+  color: #4e5969;
+}
+
+.cardActions {
+  display: flex;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.qrBtn {
+  flex: 1;
+  font-size: 26px;
+  color: #165dff;
+  background: rgba(22, 93, 255, 0.1);
+  border-radius: 12px;
+  height: 64px;
+  line-height: 64px;
+  margin: 0;
+}
+
+.delBtn {
+  flex: 1;
+  font-size: 26px;
+  color: #f53f3f;
+  background: rgba(245, 63, 63, 0.1);
+  border-radius: 12px;
+  height: 64px;
+  line-height: 64px;
+  margin: 0;
+}
+
+.qrWrap {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.qrImg {
+  width: 360px;
+  height: 360px;
+  border-radius: 12px;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(22, 93, 255, 0.1);
+  border-radius: 16px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.bannerText {
+  font-size: 26px;
+  color: #165dff;
+  flex: 1;
+  margin-right: 16px;
+}
+
+.bannerBtn {
+  font-size: 26px;
+  color: #fff;
+  background: #165dff;
+  border-radius: 999px;
+  height: 60px;
+  line-height: 60px;
+  padding: 0 28px;
+  margin: 0;
+}
+
+.saveBtn {
+  background: #165dff;
+  color: #fff;
+  border-radius: 12px;
+  height: 76px;
+  line-height: 76px;
+  font-size: 30px;
+  margin: 24px 0 0;
+}
+
+.cancelBtn {
+  flex: 1;
+  background: #f2f3f5;
+  color: #4e5969;
+  border-radius: 12px;
+  height: 76px;
+  line-height: 76px;
+  font-size: 30px;
+  margin: 24px 0 0;
+}
+
+.cancelBtn + .saveBtn {
+  flex: 1;
+  margin-left: 16px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  margin: 16px 0;
+}
+
+.rowLabel {
+  width: 200px;
+  font-size: 28px;
+  color: #4e5969;
+}
+
+.input {
+  flex: 1;
+  background: #f7f8fa;
+  border-radius: 12px;
+  height: 72px;
+  line-height: 72px;
+  padding: 0 20px;
+  font-size: 28px;
+  color: #1d2129;
+}
+
+.mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 100;
+}
+
+.sheet {
+  width: 100%;
+  background: #fff;
+  border-radius: 28px 28px 0 0;
+  padding: 36px 32px 48px;
+  box-sizing: border-box;
+}
+
+.sheetTitle {
+  font-size: 34px;
+  font-weight: 600;
+  color: #1d2129;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.sheetActions {
+  display: flex;
+  gap: 0;
+}

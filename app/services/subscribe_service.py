@@ -33,6 +33,14 @@ async def send_subscribe(user_id: int, template_id: str, data: dict) -> dict | N
     if not openid:
         logger.warning("[subscribe] 发送失败:缺少 openid")
         return None
+    return await send_subscribe_to_openid(openid, template_id, data)
+
+
+async def send_subscribe_to_openid(openid: str, template_id: str, data: dict) -> dict | None:
+    """向指定 openid 发送订阅消息(用于尚未注册为本 App 用户、仅有微信号的家庭成员)。"""
+    if not openid:
+        logger.warning("[subscribe] 发送失败:缺少 openid")
+        return None
     payload = {"touser": openid, "template_id": template_id, "data": data}
     res = await wx_api.wx_request("POST", "/cgi-bin/message/subscribe/send", json=payload)
     if res is None:
