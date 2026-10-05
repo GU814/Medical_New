@@ -12,6 +12,11 @@ export interface RequestOptions<T = unknown> {
    * 命中时不打印 console.error 噪音,但仍以异常抛出,由调用方静默处理。
    */
   quietStatuses?: number[];
+  /**
+   * 内部使用:为 true 时,401 不触发静默重登 / 清登录态,仅抛出。
+   * 用于静默重登自身的换 token 请求,避免递归与误清登录态。
+   */
+  noAuthGuard?: boolean;
 }
 
 /**
@@ -26,13 +31,42 @@ export class ExpectedError extends Error {
 }
 
 /**
+ * 静默重登(方案一):
+ * wx.login 取 code -> POST /auth/wx-login 换新 token 并写入 storage。
+ * 成功返回 true;失败(无 code / 换 token 异常)返回 false。
+ * 仅在请求 401 时由 request 调用一次,不弹 UI、不跳页;失败交由上层按原逻辑处理。
+ * 内部通过 noAuthGuard 调用换 token 接口,避免递归触发重登与误清登录态。
+ */
+async function trySilentRelogin(): Promise<boolean> {
+  try {
+    const { code } = await Taro.login()
+    if (!code) return false
+    const result = await request<{ token: string }>({
+      url: '/auth/wx-login',
+      method: 'POST',
+      data: { code },
+      auth: false,
+      noAuthGuard: true,
+    })
+    if (!result?.token) return false
+    Taro.setStorageSync(STORAGE_KEYS.TOKEN, result.token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * 统一请求封装:
  * - 自动注入 Authorization: Bearer <token>
- * - 401 时清除 token 并跳转登录页
+ * - 401 时先尝试静默重登换新 token 并重试;仅当重登也失败才清除 token 并跳转登录页
  * - 统一错误处理
  */
-export async function request<T = unknown>(opts: RequestOptions<T>): Promise<T> {
-  const { url, method = 'GET', data, auth = true, header = {}, quietStatuses = [] } = opts
+export async function request<T = unknown>(
+  opts: RequestOptions<T>,
+  _attempt = 0,
+): Promise<T> {
+  const { url, method = 'GET', data, auth = true, header = {}, quietStatuses = [], noAuthGuard = false } = opts
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
 
   const finalHeader: Record<string, string> = {
@@ -58,6 +92,15 @@ export async function request<T = unknown>(opts: RequestOptions<T>): Promise<T> 
     })
 
     if (res.statusCode === 401) {
+      // 方案一:需鉴权的请求且尚未重试过时,先静默重登一次换新 token,再重试原请求,
+      // 避免 token 过期即被强制登出、丢失登录记录。
+      if (!noAuthGuard && auth !== false && _attempt === 0) {
+        const refreshed = await trySilentRelogin()
+        if (refreshed) {
+          return request<T>({ ...opts, noAuthGuard: false }, _attempt + 1)
+        }
+      }
+      // 静默重登失败 / 已重试过 / 内部请求:保持原行为,清登录态并跳登录页
       console.warn('[API] 401 未授权,清除登录态')
       Taro.removeStorageSync(STORAGE_KEYS.TOKEN)
       Taro.removeStorageSync(STORAGE_KEYS.USER)
